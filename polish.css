@@ -13,6 +13,12 @@ body{min-height:100dvh;overflow-x:hidden;overscroll-behavior:none}
 .waiting-panel .share-detail{margin-top:14px}
 .waiting-panel .share-detail summary{color:#f5dfb1;cursor:pointer;font-size:.85rem}
 .waiting-panel .share-detail textarea{margin-top:9px}
+.game-roster{font-size:clamp(1.2rem,5vw,1.55rem)!important;line-height:1.16;overflow-wrap:anywhere}
+.game-turn{display:inline-block;margin:7px 0 0;padding:4px 9px;border:1px solid #8b9e80;border-radius:999px;color:#f1d39a;font-size:.78rem;line-height:1.25}
+.game-clashes{color:#d4dfd2;font-size:.85rem;line-height:1.42;margin:10px 0 0}
+.game-dates{display:grid;gap:2px;margin:12px 0 18px}
+.game-date{display:block;width:100%;border:0;background:transparent;color:#afc4b6;text-align:left;font-size:.86rem;line-height:1.35;padding:7px 0;cursor:pointer}
+.game-date:focus-visible{outline:2px solid #e9be74;outline-offset:2px;border-radius:4px}
 .launch{min-height:min(60dvh,500px);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center;padding:12px 8px}
 .launch-crown{font-size:3.6rem;line-height:1;color:#e9be74}
 .launch h1{font:normal clamp(2.1rem,9vw,3.8rem)/1.06 Georgia,serif;letter-spacing:-.055em;margin:0}

@@ -16,7 +16,7 @@ const StateCodec = (() => {
     const card=id=>byte(cardCode(id));
     const ranksPacked=ids=>{for(let i=0;i<ids.length;i+=2){const a=ids[i]==null?15:ranks.indexOf(ids[i].split('-')[1]);const b=ids[i+1]==null?15:ranks.indexOf(ids[i+1].split('-')[1]);byte(a|(b<<4));}};
     const dice=values=>{byte(values.length);for(const n of values)byte(n);};
-    byte(state.mode==='solo'?0:state.mode==='text'?2:1);byte(state.players.length);byte(state.turn);number(state.round);
+    byte((state.mode==='solo'?0:state.mode==='text'?2:1)|(state.queenRule==='cedric'?128:0));byte(state.players.length);byte(state.turn);number(state.round);
     byte(phases.indexOf(state.phase));byte(state.setup);byte(state.view==null?255:state.view);
     byte(state.selection?['front','back','reserve'].indexOf(state.selection.location):255);
     byte(state.selection?.index??255);byte(state.attacks);byte(state.kills);
@@ -145,7 +145,7 @@ const StateCodec = (() => {
     const codecVersion=byte();
     if(codecVersion!==1&&codecVersion!==2)throw Error('Unknown match version');
     const boardCount=codecVersion===2?8:6, lineLen=codecVersion===2?4:3, layout=codecVersion===2?'expanded':'classic';
-    const modeCode=byte(),mode=['solo','local','text'][modeCode],count=byte(),turn=byte(),round=number();
+    const modeCode=byte(),mode=['solo','local','text'][modeCode&127],queenRule=modeCode&128?'cedric':'original',count=byte(),turn=byte(),round=number();
     if(!mode)throw Error('Invalid mode');
     if(count<2||count>4||turn>=count)throw Error('Invalid players');
     const phase=phases[byte()],setup=byte(),viewCode=byte(),selectionCode=byte(),selectionIndex=byte();
@@ -262,7 +262,7 @@ const StateCodec = (() => {
       if(truncated)history.truncated=true;
     }
     if(at!==data.length-4)throw Error('Unexpected match data');
-    return {version:1,layout,mode,players,turn,round,phase,setup,view:viewCode===255?null:viewCode,
+    return {version:1,layout,queenRule,mode,players,turn,round,phase,setup,view:viewCode===255?null:viewCode,
       selection:selectionCode===255?null:{location:['front','back','reserve'][selectionCode],index:selectionIndex},
       attacks,kills,pending,refill,refillIndex,refillUndo,matchId,turnNumber,currentBattles,lastBattles,message,log,history,startedAt};
   }
