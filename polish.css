@@ -14,13 +14,26 @@ body{min-height:100dvh;overflow-x:hidden;overscroll-behavior:none}
 .waiting-panel .share-detail summary{color:#f5dfb1;cursor:pointer;font-size:.85rem}
 .waiting-panel .share-detail textarea{margin-top:9px}
 .game-roster{font-size:clamp(1.2rem,5vw,1.55rem)!important;line-height:1.16;overflow-wrap:anywhere}
-.game-slot.game-ready{border-color:#d3ad69;box-shadow:0 0 0 1px #d3ad6940,0 16px 40px #081a1640}
-.game-slot.game-waiting{opacity:.7}
-.game-turn{display:inline-block;margin:7px 0 0;padding:4px 9px;border:1px solid #8b9e80;border-radius:999px;color:#f1d39a;font-size:.78rem;line-height:1.25}
-.game-clashes{color:#d4dfd2;font-size:.85rem;line-height:1.42;margin:10px 0 0}
-.game-dates{display:grid;gap:2px;margin:12px 0 18px}
-.game-date{display:block;width:100%;border:0;background:transparent;color:#afc4b6;text-align:left;font-size:.86rem;line-height:1.35;padding:7px 0;cursor:pointer}
-.game-date:focus-visible{outline:2px solid #e9be74;outline-offset:2px;border-radius:4px}
+.games-heading{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin:0 0 15px}
+.games-heading h1{font:normal 2rem Georgia,serif;letter-spacing:-.045em;margin:0}
+.games-heading p{font-size:.8rem;color:#afc4b6;margin:0}
+.game-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.game-tile{display:flex;flex-direction:column;justify-content:space-between;gap:8px;min-width:0;aspect-ratio:1;padding:12px;border:1px solid #78907b;border-radius:17px;background:#1c3b32;color:#f7f0dd;text-align:left;box-shadow:0 8px 22px #081a1633}
+.game-tile.game-ready{border-color:#dfbc7a;box-shadow:0 0 0 1px #d3ad6940,0 8px 22px #081a1640}
+.game-tile.game-waiting{opacity:.54}
+.game-tile:focus-visible{outline:3px solid #e9be74;outline-offset:2px}
+.tile-roster{display:flex;flex-direction:column;gap:3px;min-width:0;overflow:hidden}
+.tile-player{display:flex;align-items:center;gap:5px;min-width:0;font-size:clamp(.72rem,3.1vw,.94rem);line-height:1.16}
+.tile-emoji{flex:0 0 auto;font-size:1.03em}
+.tile-name{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tile-player.tile-current{color:#f19a8a;font-weight:800}
+.tile-last{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.7rem;color:#b9ccbd}
+.game-new{align-items:center;justify-content:center;text-align:center;border-style:dashed;color:#f4d797;background:#1a392f}
+.game-new span{font-size:3rem;line-height:.95;font-weight:300}
+.game-new strong{font-size:.95rem}
+.game-tools{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin:18px 0}
+.game-tools .button{font-size:.82rem;padding:10px;min-height:44px}
+.details-actions{display:grid;gap:9px;margin:18px 0}
 .launch{min-height:min(60dvh,500px);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center;padding:12px 8px}
 .launch-crown{font-size:3.6rem;line-height:1;color:#e9be74}
 .launch h1{font:normal clamp(2.1rem,9vw,3.8rem)/1.06 Georgia,serif;letter-spacing:-.055em;margin:0}

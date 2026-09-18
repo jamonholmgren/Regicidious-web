@@ -47,7 +47,6 @@ let retreatArmed=null,retreatTimer=null;
 let scoresOpen=false,scoreLayout='expanded',scoreLink='',scoreLinkSource='',scoreLinkBusy=false,scoreLinkError='',incomingScores=null,incomingRatings=null,scoreImportNotice='';
 let ratingError='',ratingReconciled=false;
 let tutorialOpen=false,tutorialStep=0,tutorialRolling=false,tutorialDice=null,tutorialTimer=null;
-const expandedGameDates=new Set();
 const SEAT_COOKIE='rgseat_';
 const IDENTITY_PREFIX='regicidious.identity.';
 try { installDismissed=localStorage.getItem('regicidious.install-tip.dismissed')==='1'; } catch { /* Storage warning appears elsewhere. */ }
@@ -263,18 +262,6 @@ function relativeText(time) {
   const elapsed=Math.max(0,Date.now()-time);
   const parts=elapsed<60000?[Math.floor(elapsed/1000),'second']:elapsed<3600000?[Math.floor(elapsed/60000),'minute']:elapsed<86400000?[Math.floor(elapsed/3600000),'hour']:[Math.floor(elapsed/86400000),'day'];
   return new Intl.RelativeTimeFormat(undefined,{numeric:'auto'}).format(-parts[0],parts[1]);
-}
-function startedDayText(time) {
-  if(!time)return 'not recorded';
-  const day=d=>Date.UTC(d.getFullYear(),d.getMonth(),d.getDate())/86400000;
-  return new Intl.RelativeTimeFormat(undefined,{numeric:'auto'}).format(day(new Date(time))-day(new Date()),'day');
-}
-function gameDateButton(id,kind,time) {
-  const label=kind==='last'?'Last move · ':'Started: ';
-  if(!time)return `<span class="game-date">${label}not recorded</span>`;
-  const expanded=expandedGameDates.has(`${id}:${kind}`);
-  const value=expanded?dateText(time):kind==='last'?relativeText(time):startedDayText(time);
-  return `<button type="button" class="game-date" data-action="toggle-game-date" data-id="${escapeHTML(id)}" data-kind="${kind}" aria-pressed="${expanded}" title="${expanded?'Show relative date':'Show full date and time'}">${label}${escapeHTML(value)}</button>`;
 }
 async function prepareBackupFor(saved,id) {
   const seat=saved.mode==='text'?Number(recallSeat(saved.matchId)??-1):-1;
@@ -497,26 +484,41 @@ function cardHTML(id, action, location, index, opts={}) {
 }
 function lineHTML(cards, action, location, hidden=false) { return `<div class="line">${cards.map((id,i) => cardHTML(id,action,location,i,{hidden})).join('')}</div>`; }
 function frame(content,compact=false) {
-  const backup=game?.mode==='solo'&&!hubOpen&&!incomingBackup&&!incomingScores&&!tutorialOpen&&!scoresOpen?`<section class="panel"><h3>Keep a backup</h3><p class="muted small">A backup link contains the whole match, including hidden cards. Keep it private.</p><button class="button secondary wide" data-action="backup">Make Backup</button>${backupText?`<label class="field" style="margin-top:12px"><span>Backup link</span><textarea readonly rows="3">${escapeHTML(backupText)}</textarea></label><button class="button secondary" data-action="copy-backup">Copy link</button>`:''}</section>`:'';
+  const inMatch=!!game&&!hubOpen&&!incomingBackup&&!incomingScores&&!tutorialOpen&&!scoresOpen;
+  const topAction=inMatch?matchReplay||computerPlayback?'':`<button class="pill" data-action="toggle-sheet" aria-label="Game details">☰</button>`:hubOpen?'':`<button class="pill" data-action="games">Games</button>`;
   const credit=`<p class="notice">Game by Shane Holmgren · Digital adaptation by Jamon Holmgren, <a href="https://jammin.games/" target="_blank" rel="noopener noreferrer">Jammin Games</a><br><span class="perf">Last move: logic ${micro(timings.logic)} · save ${micro(timings.save)} · UI ${micro(timings.render)}</span></p>`;
-  app.innerHTML = `<main class="app ${compact?'compact-app':''}"><header class="top ${compact?'compact-top':''}"><div class="brand">♛ Regicidious</div><div class="top-actions">${compact?`<button class="pill" data-action="toggle-sheet" aria-label="Game details">☰</button>`:''}<button class="pill" data-action="games">Games</button></div></header>${storageError?`<div class="status" role="alert">${storageError}</div>`:''}${backupError?`<div class="status" role="alert">${backupError}</div>`:''}${content}${!compact&&!game&&!hubOpen&&!incomingBackup&&!incomingScores&&!scoresOpen&&!tutorialOpen?pastePanel():''}${compact?'':backup+credit}</main>`;
+  app.innerHTML = `<main class="app ${compact?'compact-app':''}"><header class="top ${compact?'compact-top':''}"><div class="brand">♛ Regicidious</div><div class="top-actions">${topAction}</div></header>${storageError?`<div class="status" role="alert">${storageError}</div>`:''}${backupError?`<div class="status" role="alert">${backupError}</div>`:''}${content}${!compact&&!game&&!hubOpen&&!incomingBackup&&!incomingScores&&!scoresOpen&&!tutorialOpen?pastePanel():''}${!compact&&inMatch?arenaDetails():''}${compact?'':credit}</main>`;
+}
+function shortTileName(name,count){
+  const chars=Array.from(name.trim()),max=count>2?10:13;
+  return chars.length>max?chars.slice(0,max-1).join('')+'…':chars.join('');
+}
+function compactAge(time){
+  if(!time)return 'No moves yet';
+  const elapsed=Math.max(0,Date.now()-time);
+  if(elapsed<60000)return 'just now';
+  if(elapsed<3600000)return `${Math.floor(elapsed/60000)}m ago`;
+  if(elapsed<86400000)return `${Math.floor(elapsed/3600000)}h ago`;
+  if(elapsed<604800000)return `${Math.floor(elapsed/86400000)}d ago`;
+  if(elapsed<2592000000)return `${Math.floor(elapsed/604800000)}w ago`;
+  return `${Math.floor(elapsed/2592000000)}mo ago`;
 }
 function slotCard({id,game:g,dates}, finished) {
-  const roster=g.players.map(p=>`${p.emoji} ${p.name}`).join(' vs ');
-  const started=dates.started||g.startedAt||0;
-  const turn=finished?'Battle ended':g.phase==='invite'?'Inviting kingdoms':g.phase==='setup'?`${g.players[g.setup].name} sets their lines`:`${g.players[g.turn].name} to move`;
-  const clashes=g.lastBattles?.length?`<p class="game-clashes">${escapeHTML(lastBattleSentence(g))}</p>`:'';
-  return `<section class="panel game-slot ${finished?'':slotIsMine(g)?'game-ready':'game-waiting'}"><div class="phase">${g.mode==='solo'?'Solo':g.mode==='text'?'Text multiplayer':'Pass the phone'} · Round ${g.round}</div><h2 class="game-roster">${escapeHTML(roster)}</h2><p class="game-turn">${escapeHTML(turn)}</p>${clashes}<div class="game-dates">${gameDateButton(id,'last',dates.last)}${gameDateButton(id,'started',started)}</div><button class="button wide" data-action="open-game" data-id="${id}">${finished?'View game':'Continue →'}</button>${canReplay(g)?`<button class="button secondary wide" data-action="replay-game" data-id="${id}">Replay game</button>`:''}<div class="actions"><button class="button secondary" data-action="backup-slot" data-id="${id}">Make Backup</button><button class="button ${deleteCandidate===id?'danger':'ghost'}" data-action="delete-game" data-id="${id}">${deleteCandidate===id?'Confirm delete':'Delete game'}</button></div>${backupForSlot===id&&backupText?`<label class="field"><span>Private backup link</span><textarea readonly rows="3">${escapeHTML(backupText)}</textarea></label><button class="button secondary" data-action="copy-backup">Copy link</button>`:''}</section>`;
+  const current=g.phase==='setup'?g.setup:g.turn;
+  const roster=g.players.map((p,i)=>`<span class="tile-player${!finished&&i===current?' tile-current':''}"><span class="tile-emoji">${escapeHTML(p.emoji)}</span><span class="tile-name">${escapeHTML(shortTileName(p.name,g.players.length))}</span></span>`).join('');
+  const full=g.players.map(p=>`${p.emoji} ${p.name}`).join(' versus ');
+  const age=compactAge(dates.last),status=finished?'finished':slotIsMine(g)?'game-ready':'game-waiting';
+  return `<button type="button" class="game-tile ${status}" data-action="open-game" data-id="${escapeHTML(id)}" aria-label="${escapeHTML(full)}. ${finished?'Finished match.':'Current turn: '+g.players[current].name+'.'} Last move ${escapeHTML(relativeText(dates.last)||'not recorded')}." title="${escapeHTML(full)}"><span class="tile-roster">${roster}</span><span class="tile-last">${finished?'Finished · ':'Last move · '}${escapeHTML(age)}</span></button>`;
 }
 function renderHub() {
   const slots=gameSlots();
   const active=slots.filter(s=>s.game.phase!=='victory'&&s.game.phase!=='stalemate').sort((a,b)=>Number(slotIsMine(b.game))-Number(slotIsMine(a.game))||(b.dates.last||0)-(a.dates.last||0));
-  const done=slots.filter(s=>s.game.phase==='victory'||s.game.phase==='stalemate');
+  const done=slots.filter(s=>s.game.phase==='victory'||s.game.phase==='stalemate').sort((a,b)=>(b.dates.last||0)-(a.dates.last||0));
   if(completedOpen){
-    frame(`<section class="hero"><div class="crown">♛</div><h1>Completed games</h1><p>Finished matches stay here for replay and backup.</p></section>${hubNotice?`<p class="status">${escapeHTML(hubNotice)}</p>`:''}${done.map(s=>slotCard(s,true)).join('')||'<p class="muted">No completed games on this device.</p>'}<div class="actions"><button class="button secondary wide" data-action="games">Back to games</button></div>`);
+    frame(`<section class="games-heading"><h1>Completed games</h1></section>${hubNotice?`<p class="status">${escapeHTML(hubNotice)}</p>`:''}<div class="game-grid">${done.map(s=>slotCard(s,true)).join('')}</div>${done.length?'':'<p class="muted">No completed games on this device.</p>'}<div class="game-tools"><button class="button secondary" data-action="games">Back to games</button></div>`);
     return;
   }
-  frame(`<section class="hero"><div class="crown">♛</div><h1>Your games</h1><p>Active matches stay here until you delete them.</p></section>${hubNotice?`<p class="status">${escapeHTML(hubNotice)}</p>`:''}${active.map(s=>slotCard(s,false)).join('')||'<p class="muted">No games in progress.</p>'}<div class="actions">${done.length?`<button class="button secondary wide" data-action="completed-games">Completed games</button>`:''}<button class="button secondary wide" data-action="new-game">Start another game</button><button class="button secondary wide" data-action="tutorial-open">Training grounds · tutorial</button><button class="button secondary wide" data-action="scores-open">Solo high scores</button></div>${pastePanel()}`);
+  frame(`<section class="games-heading"><h1>Games</h1><p>${active.length} in progress</p></section>${hubNotice?`<p class="status">${escapeHTML(hubNotice)}</p>`:''}<div class="game-grid">${active.map(s=>slotCard(s,false)).join('')}<button type="button" class="game-tile game-new" data-action="new-game"><span aria-hidden="true">＋</span><strong>New Game</strong></button></div><div class="game-tools">${done.length?`<button class="button secondary" data-action="completed-games">Completed games (${done.length})</button>`:''}<button class="button secondary" data-action="tutorial-open">Tutorial</button><button class="button secondary" data-action="scores-open">Solo records</button></div>${pastePanel()}`);
 }
 function renderScores() {
   let entries=[];
@@ -680,10 +682,11 @@ function arenaRow(owner,row,own,mode,visual) {
 }
 function arenaDetails() {
   if(!sheetOpen)return '';
-  const share=game.mode==='text'?`<p class="small muted">Turn #${game.turnNumber}: ${escapeHTML(player(game.turn).name)}</p>${replayLastButton()}<p class="small muted">Finish your turn to create the next player's link.</p>`:'';
+  const share=game.mode==='text'?`<p class="small muted">Turn #${game.turnNumber}: ${escapeHTML(player(game.turn).name)}</p>${replayLastButton()}<p class="small muted">${game.phase==='invite'?'Send each player their private invitation.':textAccess()===game.turn?'Finish your turn to create the next player’s link.':'Waiting for the next full-state update link.'}</p>`:'';
   const notice=game.mode==='text'?restoreNoticeText(game,textAccess()):'';
-  const backup=`<button class="button secondary wide" data-action="backup">Make Backup</button>${backupForSlot===slotId&&backupText?`<textarea readonly rows="3">${escapeHTML(backupText)}</textarea><button class="button secondary" data-action="copy-backup">Copy backup link</button>`:''}`;
-  return `<div class="sheet-scrim" data-action="toggle-sheet"></div><section class="arena-sheet" role="dialog" aria-label="Game details"><div class="row"><h3>Game details</h3><button class="button ghost" data-action="toggle-sheet">Close</button></div><p class="muted small">Round ${game.round} · ${escapeHTML(player(game.turn).name)} · ${escapeHTML(game.phase)}</p>${notice?`<p class="status">${escapeHTML(notice)}</p>`:''}<p class="small">${escapeHTML(game.message||'Tap a card to select it. The highest individual die wins.')}</p>${game.log?.length?`<div class="small muted">${game.log.slice(-6).reverse().map(item=>`<p>${escapeHTML(item)}</p>`).join('')}</div>`:''}${share}${backup}<p class="small muted">Game by Shane Holmgren · Digital adaptation by Jamon Holmgren, <a href="https://jammin.games/" target="_blank" rel="noopener noreferrer">Jammin Games</a>.</p><p class="small muted">Last move: logic ${micro(timings.logic)} · save ${micro(timings.save)} · UI ${micro(timings.render)}.</p></section>`;
+  const backup=`<p class="small muted">Back up this match before removing it if you may want to restore it later.</p><button class="button secondary wide" data-action="backup">Make Backup</button>${backupForSlot===slotId&&backupText?`<textarea readonly rows="3">${escapeHTML(backupText)}</textarea><button class="button secondary" data-action="copy-backup">Copy backup link</button>`:''}`;
+  const dates=slotId?readDates(slotId):{started:0,last:0};
+  return `<div class="sheet-scrim" data-action="toggle-sheet"></div><section class="arena-sheet" role="dialog" aria-label="Game details"><div class="row"><h3>Match details</h3><button class="button ghost" data-action="toggle-sheet">Close</button></div><p class="muted small">Round ${game.round} · ${escapeHTML(player(game.turn).name)} · ${escapeHTML(game.phase)}</p><p class="muted small">Started ${escapeHTML(dateText(dates.started||game.startedAt))}<br>Last move ${escapeHTML(dateText(dates.last))}${dates.last?` · ${escapeHTML(relativeText(dates.last))}`:''}</p>${notice?`<p class="status">${escapeHTML(notice)}</p>`:''}<p class="small">${escapeHTML(game.message||'Tap a card to select it. The highest individual die wins.')}</p>${game.log?.length?`<div class="small muted">${game.log.slice(-6).reverse().map(item=>`<p>${escapeHTML(item)}</p>`).join('')}</div>`:''}${share}${backup}<div class="details-actions"><button class="button secondary wide" data-action="games">All games</button><button class="button ${deleteCandidate===slotId?'danger':'ghost'} wide" data-action="delete-game" data-id="${escapeHTML(slotId)}">${deleteCandidate===slotId?'Confirm delete':'Delete from this device'}</button></div><p class="small muted">Game by Shane Holmgren · Digital adaptation by Jamon Holmgren, <a href="https://jammin.games/" target="_blank" rel="noopener noreferrer">Jammin Games</a>.</p><p class="small muted">Last move: logic ${micro(timings.logic)} · save ${micro(timings.save)} · UI ${micro(timings.render)}.</p></section>`;
 }
 function arenaReserve(owner, visual) {
   const p=player(owner);
@@ -1516,19 +1519,11 @@ app.addEventListener('click', event => {
     else {turnLinkError='Sharing is unavailable here. Copy the message instead.';render();}
     return;
   }
-  if(action==='toggle-game-date'&&hubOpen){
-    const kind=button.dataset.kind;
-    if(kind!=='last'&&kind!=='started')return;
-    const key=`${button.dataset.id}:${kind}`;
-    if(expandedGameDates.has(key))expandedGameDates.delete(key);
-    else expandedGameDates.add(key);
-    render();return;
-  }
   if(action==='delete-game'){
     if(deleteCandidate!==button.dataset.id){
       deleteCandidate=button.dataset.id;
       clearTimeout(deleteTimer);
-      deleteTimer=setTimeout(()=>{deleteCandidate=null;if(hubOpen)render();},5000);
+      deleteTimer=setTimeout(()=>{deleteCandidate=null;if(hubOpen||sheetOpen)render();},5000);
       render();return;
     }
     clearTimeout(deleteTimer);
@@ -1542,7 +1537,8 @@ app.addEventListener('click', event => {
         if(owned!=null)persistSeat(doomed.matchId,owned);
       }
       if(id===slotId){localStorage.removeItem(ACTIVE_KEY);slotId=null;game=null;}
-      deleteCandidate=null;hubNotice='Game removed from this device. A saved backup link can restore it.';
+      deleteCandidate=null;sheetOpen=false;hubOpen=true;completedOpen=false;backupText='';backupForSlot=null;
+      hubNotice='Game removed from this device. A saved backup link can restore it.';
       render();
     }catch(error){storageError='Could not delete this game. Its remaining data was not cleared.';console.error(error);render();}
     return;

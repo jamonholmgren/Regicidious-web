@@ -1,5 +1,5 @@
-const CACHE = 'regicidious-v33';
-const ASSETS = ['./', './index.html', './style.css', './extras.css', './arena.css?v=20', './polish.css?v=23', './codec.js?v=19', './link.js', './scores.js?v=1', './rating.js?v=1', './app.js?v=33', './manifest.webmanifest', './icon.svg', './icon-180.png'];
+const CACHE = 'regicidious-v34';
+const ASSETS = ['./', './index.html', './style.css', './extras.css', './arena.css?v=20', './polish.css?v=24', './codec.js?v=19', './link.js', './scores.js?v=1', './rating.js?v=1', './app.js?v=34', './manifest.webmanifest', './icon.svg', './icon-180.png'];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)).then(() => self.skipWaiting()));
 });
