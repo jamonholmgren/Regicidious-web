@@ -136,6 +136,10 @@ function record(event) {
   if(game.history.events.length>=8192){game.history.truncated=true;return;}
   game.history.events.push(event);
 }
+function recordFormation(owner) {
+  const p=player(owner);
+  record({t:'arrangeSet',owner,front:[...p.front],back:[...p.back],reserve:[...p.reserve]});
+}
 function canReplay(saved) {
   return saved?.phase==='victory' && !!saved.history?.origin && Array.isArray(saved.history.events) && saved.history.events.length>0 && !saved.history.truncated;
 }
@@ -957,7 +961,8 @@ function applyHistoryEvent(event) {
   if(t==='arrangeSet'){
     const p=player(event.owner);
     p.front=[...event.front];p.back=[...event.back];p.reserve=[...event.reserve];
-    game.turn=event.owner;game.phase='attack';game.selection=null;game.message='';
+    if(!['setup','refill'].includes(game.phase)){game.turn=event.owner;game.phase='attack';}
+    game.selection=null;game.message='';
     return;
   }
   if(t==='sync'){applyOrigin(game,event.origin);return;}
@@ -987,7 +992,8 @@ function buildMatchReplay(saved) {
   };
   try {
     push('The kingdoms take the field.');
-    for(const event of saved.history.events){
+    for(let eventIndex=0;eventIndex<saved.history.events.length;eventIndex++){
+      const event=saved.history.events[eventIndex];
       if(event.t==='attack'){
         applyHistoryEvent(event);
         const b=game.pending,attacker=game.turn;
@@ -1031,12 +1037,17 @@ function buildMatchReplay(saved) {
       if(event.t==='swap'){
         const id=player(event.owner)[event.to.location]?.[event.to.index];
         push(`${player(event.owner).name} moves ${id?cardTitle(id):'a card'}.`);
-      } else if(event.t==='setupDone'){const who=game.phase==='arrange'?(game.mode==='solo'?0:game.players.length-1):game.setup-1;push(`${player(Math.max(0,who)).name} locks a formation.`);}
+      } else if(event.t==='setupDone'){
+        if(saved.history.events[eventIndex-1]?.t!=='arrangeSet'){
+          const who=game.phase==='arrange'?(game.mode==='solo'?0:game.players.length-1):game.setup-1;
+          push(`${player(Math.max(0,who)).name} locks a formation.`);
+        }
+      }
       else if(event.t==='phase'&&event.phase==='arrange') push(`${player(game.turn).name} rearranges the line.`);
       else if(event.t==='phase'&&event.phase==='attack') push(`${player(game.turn).name} prepares to attack.`);
       else if(event.t==='resolve') push(game.phase==='victory'?`${player(living()[0]).name} wins.`:(game.message||'The clash is over.'));
       else if(event.t==='finish') push(game.phase==='refill'?'Front lines need filling.':'Attacks are over.');
-      else if(event.t==='refillDone') push('The front line is confirmed.');
+      else if(event.t==='refillDone'&&saved.history.events[eventIndex-1]?.t!=='arrangeSet') push('The front line is confirmed.');
       else if(event.t==='arrangeSet') push(`${player(event.owner).name} sets a formation.`);
       else if(event.t==='sync') push('The kingdoms update the field.');
     }
@@ -1187,9 +1198,9 @@ function moveSlot(owner, location, index) {
   if (from.location==='reserve' && !a[from.index]) a.splice(from.index,1);
   if (location==='reserve' && !b[index]) b.splice(index,1);
   game.selection=null;
-  record({t:'swap',owner,from:{location:from.location,index:from.index},to:{location,index}});
 }
 function completeRefill() {
+  if(game.refill[game.refillIndex]!=null)recordFormation(game.refill[game.refillIndex]);
   game.selection=null; game.refillUndo=[]; game.refillIndex++;
   if (game.refillIndex < game.refill.length) game.view=null;
   else { game.phase='income'; game.view=game.turn; game.message=''; }
@@ -1365,8 +1376,7 @@ function runAI(maxSteps=2000) {
     if(game.phase==='buy') {
       while(p.coins>=2 && p.deck.length && p.reserve.length<3) { p.coins-=2; const drawn=drawCard(p); p.reserve.push(drawn); record({t:'buy',card:drawn}); }
       game.phase='arrange';
-      record({t:'phase',phase:'arrange'});
-    } else if(game.phase==='arrange') { arrangeAI(p); record({t:'arrangeSet',owner:game.turn,front:[...p.front],back:[...p.back],reserve:[...p.reserve]}); game.phase='attack'; }
+    } else if(game.phase==='arrange') { arrangeAI(p); recordFormation(game.turn); game.phase='attack'; }
     else if(game.phase==='attack') {
       const choice=game.attacks<attackLimit() && chooseAIAttack();
       if(!choice) { finishAttacks(); continue; }
@@ -1665,6 +1675,7 @@ app.addEventListener('click', event => {
     if (action==='setup-done' && game.phase==='setup') {
       const p=player(game.setup);
       if (p.back.filter(Boolean).length>p.front.filter(Boolean).length) { game.message='Your back line cannot outnumber your front line.'; return; }
+      recordFormation(game.setup);
       if (game.setup+1<game.players.length && game.mode!=='solo') {
         game.setup++;game.selection=null;game.message='';
         if(game.mode==='text'){game.turn=game.setup;game.view=game.setup;}
@@ -1680,9 +1691,9 @@ app.addEventListener('click', event => {
     if (action==='buy' && game.phase==='buy') { const p=player(game.turn); if (p.coins>=2 && p.deck.length) { p.coins-=2; const drawn=drawCard(p); p.reserve.push(drawn); record({t:'buy',card:drawn}); } return; }
     if (action==='next') {
       if (game.phase==='arrange' && player(game.turn).back.filter(Boolean).length>player(game.turn).front.filter(Boolean).length) { game.message='Move cards forward: your back line cannot outnumber your front line.'; return; }
-      if (game.phase==='buy'||game.phase==='arrange') game.phase='attack';
+      if (game.phase==='buy'||game.phase==='arrange') {recordFormation(game.turn);game.phase='attack';}
       clearBuyPrompt();
-      game.selection=null; game.message=''; record({t:'phase',phase:game.phase}); return;
+      game.selection=null; game.message=''; return;
     }
     if (action==='attacker' && game.phase==='attack') {
       clearRetreat();
