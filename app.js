@@ -317,35 +317,39 @@ const hasCard = (p, r) => [...p.front,...p.back,...p.reserve].some(id => id && r
 function commit(change) {
   const previous = game ? structuredClone(game) : null;
   const previousSlot=slotId;
+  const started=performance.now();
   try {
-    const started=performance.now();
     change();
     timings.logic=Math.round((performance.now()-started)*1000);
     const saving=performance.now();
     localStorage.setItem(SLOT_PREFIX+slotId, encodeForBackup(game));
-    localStorage.setItem(ACTIVE_KEY,slotId);
-    try {
-      const now=Date.now(),dates=previousSlot===slotId?readDates(slotId):{started:now,last:now};
-      localStorage.setItem(META_PREFIX+slotId,`${dates.started};${now}`);
-    } catch { /* Match data remains saved even if date metadata cannot be written. */ }
     timings.save=Math.round((performance.now()-saving)*1000);
-    storageError = '';
-    const painting=performance.now();
-    render();
-    timings.render=Math.round((performance.now()-painting)*1000);
-    const indicator=app.querySelector('.perf');
-    if(indicator) indicator.textContent=`Last move: logic ${micro(timings.logic)} · save ${micro(timings.save)} · UI ${micro(timings.render)}`;
-    return true;
   } catch (error) {
     game = previous;
     slotId=previousSlot;
     computerRecording=null;computerPlayback=null;clearTimeout(replayTimer);
     clearTimeout(matchReplayTimer);clearTimeout(matchHoldTimer);matchReplay=null;
     storageError = 'Could not save this move. Free device storage and allow Safari website storage before continuing.';
-    render();
+    try { render(); } catch (paintError) { console.error(paintError); }
     console.error(error);
     return false;
   }
+  // The match slot is the commit point. Auxiliary writes and painting cannot undo it.
+  try { localStorage.setItem(ACTIVE_KEY,slotId); }
+  catch (error) { console.error(error); }
+  try {
+    const now=Date.now(),dates=previousSlot===slotId?readDates(slotId):{started:now,last:now};
+    localStorage.setItem(META_PREFIX+slotId,`${dates.started};${now}`);
+  } catch { /* Match data remains saved even if date metadata cannot be written. */ }
+  storageError = '';
+  try {
+    const painting=performance.now();
+    render();
+    timings.render=Math.round((performance.now()-painting)*1000);
+    const indicator=app.querySelector('.perf');
+    if(indicator) indicator.textContent=`Last move: logic ${micro(timings.logic)} · save ${micro(timings.save)} · UI ${micro(timings.render)}`;
+  } catch (error) { console.error(error); }
+  return true;
 }
 function newGame() {
   buyPrompt=null;clearTimeout(buyPromptTimer);setupOpen=false;
@@ -604,9 +608,8 @@ function weakestSacrifice(b) {
   return b.sacrifice.reduce((best,s,i,a)=>value(s.id)<value(a[best].id)?i:best,0);
 }
 function clonePlayState(state) {
-  const copy=structuredClone(state);
-  delete copy.history;
-  return copy;
+  const {history,...play}=state;
+  return structuredClone(play);
 }
 function recordComputer(kind,target) {
   if(computerRecording)computerRecording.push({kind,target,state:clonePlayState(game)});
@@ -1033,6 +1036,7 @@ function resolveBattle() {
     if(game.mode==='text'){game.lastBattles=game.currentBattles;game.currentBattles=[];game.turnNumber++;}
     game.phase='victory'; game.view=null; return;
   }
+  if (!player(game.turn).alive) { advanceTurn(); return; }
   game.phase='attack'; game.view=player(game.turn).cpu?null:game.turn; game.message='';
   if (game.attacks>=2 || !player(game.turn).front.some(Boolean) && !player(game.turn).back.some(id=>id&&rank(id)==='10')) finishAttacks();
 }
@@ -1147,6 +1151,7 @@ function runAI(maxSteps=2000) {
 }
 function attack(targetPlayer,row,index) {
   const source=game.selection;
+  if(game.phase!=='attack'||!player(game.turn).alive||game.attacks>=2)return;
   if (!source || !['front','back'].includes(source.location) || !player(game.turn)[source.location][source.index]) return;
   if (targetPlayer===game.turn || !player(targetPlayer)?.alive || !player(targetPlayer)[row]?.[index]) return;
   const attackCard=player(game.turn)[source.location][source.index], defendCard=player(targetPlayer)[row][index];
@@ -1326,7 +1331,9 @@ app.addEventListener('click', event => {
     }
     if(existing){
       const same=StateCodec.encode(existing.game,{history:false})===StateCodec.encode(restored,{history:false});
-      if(restored.turnNumber<existing.game.turnNumber||restored.turnNumber===existing.game.turnNumber&&!same){
+      const setupForward=restored.turnNumber===1&&existing.game.turnNumber===1&&existing.game.phase==='setup'&&
+        (restored.phase==='setup'&&restored.setup>existing.game.setup||restored.phase==='arrange'&&restored.turn===0);
+      if(restored.turnNumber<existing.game.turnNumber||restored.turnNumber===existing.game.turnNumber&&!same&&!setupForward){
         incomingBackup=null;incomingKind=null;incomingSeat=null;
         backupError='This link is older than your saved match or conflicts with it. Your saved game was kept.';
         history.replaceState(null,'',location.pathname+location.search);hubOpen=true;render();return;
