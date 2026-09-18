@@ -2,6 +2,8 @@
 const KEY = 'regicidious.game.v1';
 const SLOT_PREFIX = 'regicidious.match.';
 const META_PREFIX = 'regicidious.meta.';
+const ACCESS_PREFIX = 'regicidious.access.';
+const DELETED_PREFIX = 'regicidious.deleted.';
 const ACTIVE_KEY = 'regicidious.active';
 const MIGRATED_KEY = 'regicidious.legacy-imported';
 const SUITS = ['♠', '♥', '♣', '♦'];
@@ -13,9 +15,13 @@ let slotId=null,hubOpen=false;
 let storageError = '';
 let draft = { mode:'solo',count:2, names: ['You','Crimson Court','Iron Court','Ember Court'] };
 let timings = {logic:0,save:0,render:0};
-let backupText='',incomingBackup=null,backupError='';
+let backupText='',incomingBackup=null,incomingKind=null,incomingSeat=null,backupError='',linkLoading=false;
 let selectedOpponent=null,sheetOpen=false,reserveOpen=false;
 let computerRecording=null,computerPlayback=null,replayTimer=null;
+let backupForSlot=null,deleteCandidate=null,hubNotice='';
+let turnLink='',turnLinkSource='',turnLinkBusy=false,turnLinkError='';
+let pasteOpen=false;
+let inviteLinks={};
 
 try {
   const legacy=localStorage.getItem(KEY);
@@ -30,9 +36,11 @@ try {
 }
 catch { storageError = 'This browser could not read the saved game. Do not clear Safari website data.'; }
 if(location.hash.startsWith('#backup=')) {
-  try { incomingBackup=validateState(StateCodec.decode(location.hash.slice(8))); }
+  if(location.hash.slice(8).startsWith('E1.'))linkLoading=true;
+  else try { incomingBackup=validateState(StateCodec.decode(location.hash.slice(8)));incomingKind='backup'; }
   catch { backupError='This backup link is damaged or uses an unsupported version.'; }
 }
+if(location.hash.startsWith('#turn='))linkLoading=true;
 
 const random = max => {
   const bytes = new Uint32Array(1);
@@ -41,11 +49,13 @@ const random = max => {
   return bytes[0] % max;
 };
 function makeSlotId() { return Array.from(crypto.getRandomValues(new Uint8Array(8)),n=>n.toString(16).padStart(2,'0')).join(''); }
+function makeMatchId() { return Array.from(crypto.getRandomValues(new Uint8Array(16)),n=>n.toString(16).padStart(2,'0')).join(''); }
+function textAccess() { return Number(localStorage.getItem(ACCESS_PREFIX+game.matchId)??-1); }
 function validateState(saved) {
   const bad=()=>{throw Error('Invalid match state');};
   const validIndex=(i,length)=>Number.isInteger(i)&&i>=0&&i<length;
   const validCard=(id,owner)=>typeof id==='string'&&new RegExp(`^${owner}-(?:A|[2-9]|10|J|Q|K)$`).test(id);
-  if(saved?.version!==1||!['solo','local'].includes(saved.mode)||!Array.isArray(saved.players)||saved.players.length<2||saved.players.length>4)bad();
+  if(saved?.version!==1||!['solo','local','text'].includes(saved.mode)||!Array.isArray(saved.players)||saved.players.length<2||saved.players.length>4)bad();
   const count=saved.players.length;
   if(!validIndex(saved.turn,count)||!validIndex(saved.setup,count)||!Number.isInteger(saved.round)||saved.round<1||saved.round>1000000)bad();
   if(!['setup','buy','arrange','attack','battle','queen','refill','income','victory','stalemate'].includes(saved.phase)||saved.view!=null&&!validIndex(saved.view,count))bad();
@@ -55,6 +65,18 @@ function validateState(saved) {
   if(!Array.isArray(saved.refillUndo)||saved.refillUndo.length>3||saved.refillUndo.some(m=>!validIndex(m.owner,count)||!validIndex(m.from,3)||!validIndex(m.to,3)||!validCard(m.card,m.owner)))bad();
   if(!Number.isInteger(saved.refillIndex)||saved.refillIndex<0||saved.refillIndex>saved.refill.length||saved.phase==='refill'&&saved.refillIndex>=saved.refill.length)bad();
   if(typeof saved.message!=='string'||saved.message.length>2048||!Array.isArray(saved.log)||saved.log.length>1000||saved.log.some(s=>typeof s!=='string'||s.length>2048))bad();
+  saved.matchId??='';saved.turnNumber??=1;saved.currentBattles??=[];saved.lastBattles??=[];
+  if(typeof saved.matchId!=='string'||saved.matchId&&!/^[a-f0-9]{32}$/.test(saved.matchId)||saved.mode==='text'&&!saved.matchId||!Number.isInteger(saved.turnNumber)||saved.turnNumber<1||saved.turnNumber>1000000)bad();
+  for(const events of [saved.currentBattles,saved.lastBattles]){
+    if(!Array.isArray(events)||events.length>2)bad();
+    for(const e of events){
+      if(!validIndex(e.actor,count)||!validIndex(e.defender,count)||e.actor===e.defender||!['front','back'].includes(e.source?.row)||!validIndex(e.source?.index,3)||!['front','back'].includes(e.target?.row)||!validIndex(e.target?.index,3))bad();
+      if(!validCard(e.attackCard,e.actor)||!validCard(e.defendCard,e.defender)||!['tie','attack','defend'].includes(e.result))bad();
+      if(!Array.isArray(e.attackDice)||!Array.isArray(e.defendDice)||[e.attackDice,e.defendDice].some(d=>d.length<1||d.length>3||d.some(n=>!Number.isInteger(n)||n<1||n>6)))bad();
+      if(e.sacrifice!=null&&(!['front','back'].includes(e.sacrifice.row)||!validIndex(e.sacrifice.index,3)))bad();
+      for(const [owner,board] of [[e.actor,e.beforeActor],[e.defender,e.beforeDefender]])if(!Array.isArray(board)||board.length!==6||board.some(id=>id!=null&&!validCard(id,owner)))bad();
+    }
+  }
   saved.players.forEach((p,i)=>{
     if(p?.suit!==i||typeof p.name!=='string'||p.name.length>128||typeof p.alive!=='boolean'||typeof p.cpu!=='boolean'||!Number.isInteger(p.coins)||p.coins<0||p.coins>10000)bad();
     if(!Array.isArray(p.front)||p.front.length!==3||!Array.isArray(p.back)||p.back.length!==3||!Array.isArray(p.reserve)||!Array.isArray(p.deck))bad();
@@ -100,6 +122,50 @@ function relativeText(time) {
   const parts=elapsed<60000?[Math.floor(elapsed/1000),'second']:elapsed<3600000?[Math.floor(elapsed/60000),'minute']:elapsed<86400000?[Math.floor(elapsed/3600000),'hour']:[Math.floor(elapsed/86400000),'day'];
   return new Intl.RelativeTimeFormat(undefined,{numeric:'auto'}).format(-parts[0],parts[1]);
 }
+async function prepareBackupFor(saved,id) {
+  const seat=saved.mode==='text'?Number(localStorage.getItem(ACCESS_PREFIX+saved.matchId)??-1):-1;
+  if(saved.mode==='text'&&(seat<0||seat>=saved.players.length))throw Error('Seat ownership unavailable');
+  const source=saved.mode==='text'?`P1:${seat}:${StateCodec.encode(saved)}`:StateCodec.encode(saved);
+  const token=await LinkCodec.seal(source);
+  backupText=location.href.split('#')[0]+'#backup='+token;
+  backupForSlot=id;
+  render();
+}
+function lastBattleSentence(saved) {
+  const e=saved.lastBattles?.at(-1);
+  if(!e)return 'The last turn ended without a battle.';
+  const actor=saved.players[e.actor].name,defender=saved.players[e.defender].name;
+  if(e.result==='tie')return `${actor}’s ${cardTitle(e.attackCard)} and ${defender}’s ${cardTitle(e.defendCard)} fought to a draw!`;
+  if(e.result==='defend')return `${defender}’s ${cardTitle(e.defendCard)} defeated ${actor}’s ${cardTitle(e.attackCard)}!`;
+  if(e.sacrifice){const id=e.beforeDefender[(e.sacrifice.row==='back'?3:0)+e.sacrifice.index];return `${defender}’s Queen survived; ${cardTitle(id)} fell instead!`;}
+  return `${actor}’s ${cardTitle(e.attackCard)} defeated ${defender}’s ${cardTitle(e.defendCard)}!`;
+}
+function shareMessage(saved,url) {
+  if(saved.phase==='victory')return `${saved.players.find(p=>p.alive)?.name||'A kingdom'} wins Regicidious! ${lastBattleSentence(saved)} ${url}`;
+  return `${lastBattleSentence(saved)} ${saved.players[saved.turn].name}, it’s your turn #${saved.turnNumber}. To arms! ${url}`;
+}
+function ensureTurnLink() {
+  if(!game||game.mode!=='text')return;
+  const source=StateCodec.encode(game);
+  if(source===turnLinkSource&&(turnLink||turnLinkBusy))return;
+  turnLinkSource=source;turnLink='';turnLinkBusy=true;turnLinkError='';
+  LinkCodec.seal(source).then(token=>{
+    if(turnLinkSource!==source)return;
+    turnLink=location.href.split('#')[0]+'#turn='+token;turnLinkBusy=false;render();
+  }).catch(error=>{turnLinkBusy=false;turnLinkError='Could not prepare the turn link. Try again.';console.error(error);render();});
+}
+function ensureInvites(){
+  if(!game||game.mode!=='text'||textAccess()!==0)return;
+  const source=StateCodec.encode(game);
+  for(let seat=1;seat<game.players.length;seat++){
+    if(inviteLinks[seat]?.source===source)continue;
+    inviteLinks[seat]={source,url:''};
+    LinkCodec.seal(`P1:${seat}:${source}`).then(token=>{
+      if(inviteLinks[seat]?.source!==source)return;
+      inviteLinks[seat].url=location.href.split('#')[0]+'#backup='+token;render();
+    }).catch(error=>{console.error(error);});
+  }
+}
 function gameSlots() {
   const slots=[];
   for(let i=0;i<localStorage.length;i++) {
@@ -109,6 +175,9 @@ function gameSlots() {
     catch { /* Preserve a damaged save; never silently delete it. */ }
   }
   return slots.sort((a,b)=>a.id===slotId?-1:b.id===slotId?1:0);
+}
+function pastePanel() {
+  return pasteOpen?`<section class="panel"><h2>Open a game link</h2><p class="muted small">Paste a turn or backup link here if Messages opened Safari instead of your Home Screen app.</p><label class="field"><span>Game link</span><textarea data-import-url rows="3" placeholder="https://…/#turn=…"></textarea></label><div class="actions"><button class="button" data-action="import-link">Open link →</button><button class="button secondary" data-action="close-link">Cancel</button></div></section>`:`<button class="button secondary wide" data-action="open-link">Open a turn or backup link</button>`;
 }
 function shuffle(items) { for (let i = items.length - 1; i > 0; i--) { const j = random(i + 1); [items[i],items[j]] = [items[j],items[i]]; } return items; }
 const rank = id => id.split('-')[1];
@@ -131,6 +200,7 @@ function commit(change) {
     const saving=performance.now();
     localStorage.setItem(SLOT_PREFIX+slotId, StateCodec.encode(game));
     localStorage.setItem(ACTIVE_KEY,slotId);
+    if(game.mode==='text'&&previousSlot!==slotId&&localStorage.getItem(ACCESS_PREFIX+game.matchId)==null)localStorage.setItem(ACCESS_PREFIX+game.matchId,String(game.turn));
     try {
       const now=Date.now(),dates=previousSlot===slotId?readDates(slotId):{started:now,last:now};
       localStorage.setItem(META_PREFIX+slotId,`${dates.started};${now}`);
@@ -164,7 +234,7 @@ function newGame() {
     if (p.cpu) arrangeAI(p);
     return p;
   });
-  game = {version:1,mode:draft.mode,players,turn:0,round:1,phase:'setup',setup:0,view:null,selection:null,attacks:0,kills:0,pending:null,refill:[],refillIndex:0,refillUndo:[],message:'',log:[]};
+  game = {version:1,mode:draft.mode,players,turn:0,round:1,phase:draft.mode==='text'?'buy':'setup',setup:0,view:draft.mode==='text'?0:null,selection:null,attacks:0,kills:0,pending:null,refill:[],refillIndex:0,refillUndo:[],matchId:makeMatchId(),turnNumber:1,currentBattles:[],lastBattles:[],message:'',log:[]};
   navigator.storage?.persist?.().catch(() => {});
 }
 function advanceTurn() {
@@ -172,9 +242,10 @@ function advanceTurn() {
   if (alive.length <= 1) { game.phase = 'victory'; game.view = null; return; }
   const next = alive.find(i => i > game.turn) ?? alive[0];
   if (next <= game.turn) game.round++;
-  game.turn = next; game.phase = 'buy'; game.view = null; game.selection = null;
+  if(game.mode==='text'){game.lastBattles=game.currentBattles;game.currentBattles=[];game.turnNumber++;}
+  game.turn = next; game.phase = 'buy'; game.view = game.mode==='text'?next:null; game.selection = null;
   game.attacks = 0; game.kills = 0; game.pending = null;
-  game.message = player(next).cpu?`${player(next).name} is thinking…`:game.mode==='solo'?'Your turn. Buy cards or arrange your line.':`${player(next).name}'s turn. Pass the phone to them.`;
+  game.message = player(next).cpu?`${player(next).name} is thinking…`:game.mode==='solo'?'Your turn. Buy cards or arrange your line.':game.mode==='text'?`${player(next).name}’s turn #${game.turnNumber}.`:`${player(next).name}'s turn. Pass the phone to them.`;
 }
 function cardHTML(id, action, location, index, opts={}) {
   const selected = game?.selection && game.selection.location === location && game.selection.index === index;
@@ -186,18 +257,27 @@ function cardHTML(id, action, location, index, opts={}) {
 }
 function lineHTML(cards, action, location, hidden=false) { return `<div class="line">${cards.map((id,i) => cardHTML(id,action,location,i,{hidden})).join('')}</div>`; }
 function frame(content,compact=false) {
-  app.innerHTML = `<main class="app ${compact?'compact-app':''}"><header class="top ${compact?'compact-top':''}"><div class="brand">♛ Regicidious</div><div class="top-actions">${compact?`<button class="pill" data-action="toggle-sheet" aria-label="Game details">☰</button>`:''}<button class="pill" data-action="games">Games</button></div></header>${storageError ? `<div class="status" role="alert">${storageError}</div>` : ''}${backupError ? `<div class="status" role="alert">${backupError}</div>` : ''}${content}${!compact&&game?.mode==='solo'&&!hubOpen&&!incomingBackup?`<section class="panel"><h3>Keep a backup</h3><p class="muted small">A backup link contains the whole match, including hidden cards. Keep it private.</p><button class="button secondary wide" data-action="backup">Copy backup link</button>${backupText?`<label class="field" style="margin-top:12px"><span>Backup link · copy this if clipboard access is unavailable</span><textarea readonly rows="3">${escapeHTML(backupText)}</textarea></label>`:''}</section>`:''}${compact?'':`<p class="notice">Created by Shane Holmgren · Digital adaptation: Regicidious<br>Saved on this device after every move. Keep Safari website data to keep your game.<br><span class="perf">Last move: logic ${timings.logic} µs · save ${timings.save} µs · UI ${timings.render} µs</span></p>`}</main>`;
+  app.innerHTML = `<main class="app ${compact?'compact-app':''}"><header class="top ${compact?'compact-top':''}"><div class="brand">♛ Regicidious</div><div class="top-actions">${compact?`<button class="pill" data-action="toggle-sheet" aria-label="Game details">☰</button>`:''}<button class="pill" data-action="games">Games</button></div></header>${storageError ? `<div class="status" role="alert">${storageError}</div>` : ''}${backupError ? `<div class="status" role="alert">${backupError}</div>` : ''}${content}${!compact&&!game&&!hubOpen&&!incomingBackup?pastePanel():''}${!compact&&game?.mode==='solo'&&!hubOpen&&!incomingBackup?`<section class="panel"><h3>Keep a backup</h3><p class="muted small">A backup link contains the whole match, including hidden cards. Keep it private.</p><button class="button secondary wide" data-action="backup">Make backup link</button>${backupText?`<label class="field" style="margin-top:12px"><span>Backup link · copy this if clipboard access is unavailable</span><textarea readonly rows="3">${escapeHTML(backupText)}</textarea></label><button class="button secondary" data-action="copy-backup">Copy link</button>`:''}</section>`:''}${compact?'':`<p class="notice">Created by Shane Holmgren · Digital adaptation: Regicidious<br>Saved on this device after every move. Keep Safari website data to keep your game.<br><span class="perf">Last move: logic ${timings.logic} µs · save ${timings.save} µs · UI ${timings.render} µs</span></p>`}</main>`;
 }
 function renderHub() {
   const slots=gameSlots();
-  frame(`<section class="hero"><div class="crown">♛</div><h1>Your games</h1><p>Every match stays here until Safari website data is removed.</p></section>${slots.map(({id,game:g,dates})=>`<section class="panel"><div class="phase">${g.mode==='solo'?'Solo':'Pass & play'} · Round ${g.round}</div><h2>${escapeHTML(g.players[0].name)}${g.mode==='solo'?' vs computer':''}</h2><p class="muted small">${g.phase==='victory'?'Finished':`Current turn: ${escapeHTML(g.players[g.turn].name)}`} · ${g.players.length} kingdoms</p><p class="muted small">Started ${dateText(dates.started)}<br>Last move ${dateText(dates.last)}${dates.last?` · ${relativeText(dates.last)}`:''}</p><button class="button wide" data-action="open-game" data-id="${id}">${g.phase==='victory'?'View game':'Continue →'}</button></section>`).join('')}<div class="actions"><button class="button secondary wide" data-action="new-game">Start another game</button></div>`);
+  frame(`<section class="hero"><div class="crown">♛</div><h1>Your games</h1><p>Every match stays here until you delete it or Safari website data is removed.</p></section>${hubNotice?`<p class="status">${escapeHTML(hubNotice)}</p>`:''}${slots.map(({id,game:g,dates})=>`<section class="panel"><div class="phase">${g.mode==='solo'?'Solo':g.mode==='text'?'Text multiplayer':'Pass the phone'} · Round ${g.round}</div><h2>${escapeHTML(g.players[0].name)}${g.mode==='solo'?' vs computer':''}</h2><p class="muted small">${g.phase==='victory'?'Finished':`Current turn: ${escapeHTML(g.players[g.turn].name)}`} · ${g.players.length} kingdoms</p><p class="muted small">Started ${dateText(dates.started)}<br>Last move ${dateText(dates.last)}${dates.last?` · ${relativeText(dates.last)}`:''}</p><button class="button wide" data-action="open-game" data-id="${id}">${g.phase==='victory'?'View game':'Continue →'}</button><div class="actions"><button class="button secondary" data-action="backup-slot" data-id="${id}">Make backup link</button><button class="button ghost" data-action="delete-game" data-id="${id}">Delete game</button></div>${backupForSlot===id&&backupText?`<label class="field"><span>Private backup link</span><textarea readonly rows="3">${escapeHTML(backupText)}</textarea></label><button class="button secondary" data-action="copy-backup">Copy link</button>`:''}${deleteCandidate===id?`<div class="delete-confirm"><p>This removes this game from this device. You can restore it only if you kept a backup link.</p><div class="actions"><button class="button danger" data-action="confirm-delete" data-id="${id}">Delete local game</button><button class="button secondary" data-action="cancel-delete">Cancel</button></div></div>`:''}</section>`).join('')}<div class="actions"><button class="button secondary wide" data-action="new-game">Start another game</button></div>${pastePanel()}`);
 }
 function renderImport() {
   const p=incomingBackup.players[incomingBackup.turn];
-  frame(`<section class="panel"><div class="phase">Backup link</div><h2>Add this match?</h2><p class="muted">${escapeHTML(p.name)} · round ${incomingBackup.round} · ${incomingBackup.players.length} players</p><p class="small">Restoring adds another saved game. Your current games remain untouched.</p><div class="actions"><button class="button" data-action="restore-backup">Add backup</button><button class="button secondary" data-action="keep-current">Keep current games</button></div></section>`);
+  const turn=incomingKind==='turn';
+  frame(`<section class="panel"><div class="phase">${turn?'Text-message turn':'Backup link'}</div><h2>${turn?`${escapeHTML(p.name)}’s turn #${incomingBackup.turnNumber}`:'Restore this match?'}</h2><p class="muted">Round ${incomingBackup.round} · ${incomingBackup.players.length} players</p><p class="small">${turn?'Opening this link updates your local copy and replays the last fights. Only the addressed turn can move.':'Restoring adds another saved game. Your current games remain untouched.'}</p><div class="actions"><button class="button" data-action="restore-backup">${turn?'Open turn →':'Add backup'}</button><button class="button secondary" data-action="keep-current">Keep current games</button></div></section>`);
+}
+function renderTextWaiting() {
+  ensureTurnLink();
+  ensureInvites();
+  const p=player(game.turn);
+  const invites=textAccess()===0?`<section class="panel"><h2>Invite players to their own seats</h2><p class="small muted">Send each player only their named invite once. Invites bind their device to that seat, even before their first turn.</p>${game.players.map((q,i)=>i===0?'':`<p>${escapeHTML(q.name)} ${SUITS[i]}</p>${inviteLinks[i]?.url?`<div class="actions"><button class="button secondary" data-action="copy-invite" data-index="${i}">Copy invite</button><button class="button secondary" data-action="share-invite" data-index="${i}">Share…</button></div><textarea readonly rows="2">${escapeHTML(inviteLinks[i].url)}</textarea>`:'<p class="small muted">Preparing invite…</p>'}`).join('')}</section>`:'';
+  frame(`<section class="hero"><div class="crown">${SUITS[game.turn]}</div><div class="phase">Text multiplayer · turn #${game.turnNumber}</div><h1>${escapeHTML(p.name)}’s turn</h1><p>Your local copy is waiting for the next turn link. Anyone in the group can send this link to ${escapeHTML(p.name)}.</p></section><section class="panel"><h2>Send the turn</h2><p class="muted small">${escapeHTML(lastBattleSentence(game))}</p>${turnLinkError?`<p class="status">${escapeHTML(turnLinkError)}</p>`:''}${turnLink?`<div class="actions"><button class="button" data-action="copy-turn">Copy message</button><button class="button secondary" data-action="share-turn">Share to app…</button></div><label class="field"><span>Message and link</span><textarea readonly rows="5">${escapeHTML(shareMessage(game,turnLink))}</textarea></label>`:'<p class="muted small">Preparing a private turn link…</p>'}<p class="muted small">The link contains the whole match and a key. Keep it in your game group; it deters casual peeking but cannot prevent cheating.</p></section>${invites}${pastePanel()}`);
 }
 function renderStart() {
-  frame(`<section class="hero"><div class="crown">♛</div><h1>Regicidious</h1><p>A tiny kingdom, a dangerous front line, and two attacks to make your mark.</p></section><section class="panel"><h2>Choose your battlefield</h2><p class="muted small">Play computer courts or pass one phone around. No account or network needed after the first load.</p><div class="label">Mode</div><div class="actions"><button class="button ${draft.mode==='solo'?'':'ghost'}" data-action="mode" data-value="solo">Solo vs computer</button><button class="button ${draft.mode==='local'?'':'ghost'}" data-action="mode" data-value="local">Pass & play</button></div><div class="label">${draft.mode==='solo'?'Computer opponents':'Players'}</div><div class="actions">${[2,3,4].map(n => `<button class="button ${draft.count===n?'':'ghost'}" data-action="count" data-value="${n}">${draft.mode==='solo'?n-1:n}</button>`).join('')}</div><div class="stack" style="margin-top:18px">${draft.names.slice(0,draft.mode==='solo'?1:draft.count).map((name,i) => `<label class="field"><span>${SUITS[i]} ${draft.mode==='solo'?'Your name':NAMES[i]}</span><input data-name="${i}" maxlength="24" value="${escapeHTML(name)}" autocomplete="off"></label>`).join('')}</div><div class="actions"><button class="button wide" data-action="start">Begin the war →</button></div></section><details class="panel"><summary>How this version plays</summary><ul class="rule-list"><li>Arrange six cards, then take turns buying, rearranging, and attacking up to twice.</li><li>Tap your front-line attacker or a back-line Knight, then an enemy card. A front-line Knight can reach the enemy back line; a back-line Knight can attack only the enemy front.</li><li>Highest single die wins. Ties spare both cards. Defeated cards return to the owner’s shuffled pile.</li><li>A surviving Jack earns one coin; each enemy card defeated earns one more. Cards cost two coins.</li><li>Civ bonuses are not included yet.</li></ul></details>`);
+  const modes=[['solo','Solo vs computer'],['local','Pass the phone'],['text','Text-message multiplayer']];
+  frame(`<section class="hero"><div class="crown">♛</div><h1>Regicidious</h1><p>A tiny kingdom, a dangerous front line, and two attacks to make your mark.</p></section><section class="panel"><h2>Choose your battlefield</h2><p class="muted small">Solo and pass-the-phone work offline. Text multiplayer exchanges a new game link each turn.</p><div class="label">Mode</div><div class="actions mode-actions">${modes.map(([mode,title])=>`<button class="button ${draft.mode===mode?'':'ghost'}" data-action="mode" data-value="${mode}">${title}</button>`).join('')}</div><div class="label">${draft.mode==='solo'?'Computer opponents':'Players'}</div><div class="actions">${[2,3,4].map(n=>`<button class="button ${draft.count===n?'':'ghost'}" data-action="count" data-value="${n}">${draft.mode==='solo'?n-1:n}</button>`).join('')}</div><div class="stack" style="margin-top:18px">${draft.names.slice(0,draft.mode==='solo'?1:draft.count).map((name,i)=>`<label class="field"><span>${SUITS[i]} ${draft.mode==='solo'?'Your name':NAMES[i]}</span><input data-name="${i}" maxlength="24" value="${escapeHTML(name)}" autocomplete="off"></label>`).join('')}</div>${draft.mode==='text'?`<p class="small muted">One player creates the game and names all players. Each turn is carried by a private link. Anyone with the link could inspect or replay it; this is casual privacy, not cheat-proof multiplayer.</p>`:''}<div class="actions"><button class="button wide" data-action="start">Begin the war →</button></div></section><details class="panel"><summary>How this version plays</summary><ul class="rule-list"><li>Arrange six cards, then take turns buying, rearranging, and attacking up to twice.</li><li>Tap your front-line attacker or a back-line Knight, then an enemy card. A front-line Knight can reach the enemy back line; a back-line Knight can attack only the enemy front.</li><li>Highest single die wins. Ties spare both cards. Defeated cards return to the owner’s shuffled pile.</li><li>A surviving Jack earns one coin; each enemy card defeated earns one more. Cards cost two coins.</li><li>Civ bonuses are not included yet.</li></ul></details>`);
 }
 function renderVeil() {
   const index = game.phase === 'setup' ? game.setup : game.phase === 'refill' ? game.refill[game.refillIndex] : game.phase === 'queen' ? game.pending.defender : game.turn;
@@ -225,7 +305,7 @@ function arenaRow(owner,row,own,mode,visual) {
     const loser=visual?.loser?.owner===owner&&visual.loser.row===row&&visual.loser.index===index;
     const winner=visual?.winner?.owner===owner&&visual.winner.row===row&&visual.winner.index===index;
     const reveal=source||target&&visual?.revealTarget||!own && mode==='battle' && game.pending?.defender===owner && game.pending.target.row===row && game.pending.target.index===index;
-    const hidden=visual?(!own||player(owner).cpu)&&!reveal:!own&&!reveal;
+    const hidden=visual?(!own||visual.hideOwnOthers||player(owner).cpu)&&!reveal:!own&&!reveal;
     const active=source||target&&visual?.showTarget;
     const className=visual?`${!active?'replay-dim':''} ${active?'replay-active':''} ${source&&visual.kind==='reveal'?'replay-flip':''} ${loser?'replay-loser':''} ${winner?'replay-winner':''}`:'';
     return cardHTML(id,action,own?row:`${owner}:${row}`,index,{hidden,owner,row,target:reveal,className});
@@ -234,7 +314,9 @@ function arenaRow(owner,row,own,mode,visual) {
 }
 function arenaDetails() {
   if(!sheetOpen)return '';
-  return `<div class="sheet-scrim" data-action="toggle-sheet"></div><section class="arena-sheet" role="dialog" aria-label="Game details"><div class="row"><h3>Game details</h3><button class="button ghost" data-action="toggle-sheet">Close</button></div><p class="muted small">Round ${game.round} · ${escapeHTML(player(game.turn).name)} · ${escapeHTML(game.phase)}</p><p class="small">${escapeHTML(game.message||'Tap a card to select it. The highest individual die wins.')}</p>${game.log?.length?`<div class="small muted">${game.log.slice(-6).reverse().map(item=>`<p>${escapeHTML(item)}</p>`).join('')}</div>`:''}${game.mode==='solo'?`<button class="button secondary wide" data-action="backup">Copy backup link</button>${backupText?`<textarea readonly rows="3">${escapeHTML(backupText)}</textarea>`:''}`:''}<p class="small muted">Created by Shane Holmgren. Last move: logic ${timings.logic} µs · save ${timings.save} µs · UI ${timings.render} µs.</p></section>`;
+  const share=game.mode==='text'?`<p class="small muted">Turn #${game.turnNumber}: ${escapeHTML(player(game.turn).name)}</p><p class="small muted">Finish your turn to create the next player's link.</p>`:'';
+  const backup=`<button class="button secondary wide" data-action="backup">Make backup link</button>${backupForSlot===slotId&&backupText?`<textarea readonly rows="3">${escapeHTML(backupText)}</textarea><button class="button secondary" data-action="copy-backup">Copy backup link</button>`:''}`;
+  return `<div class="sheet-scrim" data-action="toggle-sheet"></div><section class="arena-sheet" role="dialog" aria-label="Game details"><div class="row"><h3>Game details</h3><button class="button ghost" data-action="toggle-sheet">Close</button></div><p class="muted small">Round ${game.round} · ${escapeHTML(player(game.turn).name)} · ${escapeHTML(game.phase)}</p><p class="small">${escapeHTML(game.message||'Tap a card to select it. The highest individual die wins.')}</p>${game.log?.length?`<div class="small muted">${game.log.slice(-6).reverse().map(item=>`<p>${escapeHTML(item)}</p>`).join('')}</div>`:''}${share}${backup}<p class="small muted">Created by Shane Holmgren. Last move: logic ${timings.logic} µs · save ${timings.save} µs · UI ${timings.render} µs.</p></section>`;
 }
 function arenaReserve(owner) {
   const p=player(owner);
@@ -246,14 +328,14 @@ function renderArena(owner,mode,intro,controls,visual) {
   const opponent=visual?.opponent??(mode==='battle'&&game.pending?.defender!==owner?game.pending.defender:(candidates.includes(selectedOpponent)?selectedOpponent:candidates[0]));
   selectedOpponent=opponent;
   const target=opponent==null?null:player(opponent);
-  const chips=mode==='battle'||visual?'':candidates.length>1?`<div class="opponent-chips">${candidates.map(i=>`<button class="opponent-chip ${i===opponent?'active':''}" data-action="opponent" data-index="${i}">${SUITS[i]} ${escapeHTML(player(i).name)}</button>`).join('')}</div>`:'';
+  const switcher=!visual&&candidates.length>1?`<div class="opponent-switch"><button data-action="opponent-nav" data-step="-1" aria-label="Previous opponent">‹</button><strong>${escapeHTML(target.name)} ${SUITS[opponent]}</strong><button data-action="opponent-nav" data-step="1" aria-label="Next opponent">›</button></div>`:`<strong>${target?`${escapeHTML(target.name)} ${SUITS[opponent]}`:'Your opponent'}</strong>`;
   let middle=`<div class="arena-instruction">${escapeHTML((visual||mode==='refill')?intro:game.message||intro)}</div>`;
   if(mode==='battle'||visual?.showDice) {
     const b=game.pending;
     middle=`<div class="clash-dice" data-dice-lane aria-live="off"><div class="clash-side"><span>${label(b.defendCard)}</span><div class="dice">${b.defendDice.map(()=>`<span class="die">?</span>`).join('')}</div></div><span class="clash-versus">vs</span><div class="clash-side"><span>${label(b.attackCard)}</span><div class="dice">${b.attackDice.map(()=>`<span class="die">?</span>`).join('')}</div></div></div>`;
   }
   const own=player(owner);
-  frame(`<section class="arena" aria-label="Battlefield"><div class="arena-opponent"><div class="arena-hud"><strong>${target?`${escapeHTML(target.name)} ${SUITS[opponent]}`:'Your opponent'}</strong><span>${target?`${target.front.filter(Boolean).length+target.back.filter(Boolean).length} cards`:''}</span></div>${chips}${target?arenaRow(opponent,'back',false,mode,visual):''}${target?arenaRow(opponent,'front',false,mode,visual):''}</div><div class="arena-middle">${middle}</div><div class="arena-self"><div class="arena-hud"><strong>${escapeHTML(own.name)} ${SUITS[owner]}</strong><span>◉ ${own.coins} · ${game.attacks}/2 attacks</span></div>${arenaRow(owner,'front',true,mode,visual)}${arenaRow(owner,'back',true,mode,visual)}${arenaReserve(owner)}</div><div class="arena-dock ${visual?'replay-dock':''}">${controls}</div></section>${arenaDetails()}`,true);
+  frame(`<section class="arena" aria-label="Battlefield"><div class="arena-opponent"><div class="arena-hud">${switcher}<span>${target?`${target.front.filter(Boolean).length+target.back.filter(Boolean).length} cards`:''}</span></div>${target?arenaRow(opponent,'back',false,mode,visual):''}${target?arenaRow(opponent,'front',false,mode,visual):''}</div><div class="arena-middle">${middle}</div><div class="arena-self"><div class="arena-hud"><strong>${escapeHTML(own.name)} ${SUITS[owner]}</strong><span>◉ ${own.coins} · ${game.attacks}/2 attacks</span></div>${arenaRow(owner,'front',true,mode,visual)}${arenaRow(owner,'back',true,mode,visual)}${arenaReserve(owner)}</div><div class="arena-dock ${visual?'replay-dock':''}">${controls}</div></section>${arenaDetails()}`,true);
 }
 function renderPlay() {
   const p = player(game.turn);
@@ -338,9 +420,27 @@ function runAIWithReplay() {
   computerRecording=game.mode==='solo'?[]:null;
   try { runAI(); }
   finally {
-    if(computerRecording?.length)computerPlayback={frames:computerRecording,index:0};
+    if(computerRecording?.length)computerPlayback={frames:computerRecording,index:0,viewerSeat:0};
     computerRecording=null;
   }
+}
+function startTextReplay(saved) {
+  const frames=[];
+  for(const e of saved.lastBattles||[]){
+    const state=structuredClone(saved);
+    state.turn=e.actor;state.phase='attack';state.selection={location:e.source.row,index:e.source.index};state.pending=null;
+    state.players[e.actor].front=e.beforeActor.slice(0,3);state.players[e.actor].back=e.beforeActor.slice(3);state.players[e.actor].alive=true;
+    state.players[e.defender].front=e.beforeDefender.slice(0,3);state.players[e.defender].back=e.beforeDefender.slice(3);state.players[e.defender].alive=true;
+    const target={owner:e.defender,row:e.target.row,index:e.target.index};
+    frames.push({kind:'reveal',state:structuredClone(state),target});
+    frames.push({kind:'target',state:structuredClone(state),target});
+    const sacrifice=e.sacrifice?[{...e.sacrifice,id:e.beforeDefender[(e.sacrifice.row==='back'?3:0)+e.sacrifice.index]}]:[];
+    state.phase='battle';state.selection=null;
+    state.pending={defender:e.defender,source:e.source,target:{player:e.defender,...e.target},attackCard:e.attackCard,defendCard:e.defendCard,attackDice:e.attackDice,defendDice:e.defendDice,result:e.result,sacrifice};
+    frames.push({kind:'roll',state:structuredClone(state)});
+    frames.push({kind:'result',state:structuredClone(state)});
+  }
+  if(frames.length)computerPlayback={frames,index:0,viewerSeat:textAccess(),textReplay:true};
 }
 function advanceReplay() {
   if(!computerPlayback)return;
@@ -363,7 +463,7 @@ function renderPlayback() {
       const title=cardTitle(player(attacker)[source.row][source.index]);
       narration=`${actor} shows ${/^[AEIOU]/.test(title)?'an':'a'} ${title}!`;
     }
-    if(step.kind==='target')narration=`${actor}’s ${cardTitle(player(attacker)[source.row][source.index])} attacks ${owner===0?'your':`${opponent}’s`} ${owner===0?cardTitle(player(owner)[target.row][target.index]):'face-down card'}!`;
+    if(step.kind==='target')narration=`${actor}’s ${cardTitle(player(attacker)[source.row][source.index])} attacks ${owner===playback.viewerSeat?'your':`${opponent}’s`} ${owner===playback.viewerSeat?cardTitle(player(owner)[target.row][target.index]):'face-down card'}!`;
     if(step.kind==='roll')narration='The dice tumble…';
     let loser=null,winner=null;
     if(step.kind==='result') {
@@ -375,7 +475,7 @@ function renderPlayback() {
         narration=sacrifice>=0?`${opponent}’s Queen survives; ${cardTitle(b.sacrifice[sacrifice].id)} falls instead.`:`${actor} defeats ${opponent}’s ${cardTitle(b.defendCard)}!`;
       } else {loser=source;winner=target;narration=`${opponent}’s ${cardTitle(b.defendCard)} defeats ${actor}’s ${cardTitle(b.attackCard)}!`;}
     }
-    const visual={kind:step.kind,opponent:attacker,source,target,showTarget:step.kind!=='reveal',revealTarget:['roll','result'].includes(step.kind),showDice:['roll','result'].includes(step.kind),loser,winner};
+    const visual={kind:step.kind,opponent:attacker,source,target,showTarget:step.kind!=='reveal',revealTarget:['roll','result'].includes(step.kind),showDice:['roll','result'].includes(step.kind),hideOwnOthers:playback.textReplay,loser,winner};
     renderArena(owner,'replay',narration,`<div class="replay-narration" aria-live="polite">${escapeHTML(narration)}</div><button class="button secondary" data-action="replay-next">${playback.index===playback.frames.length-1?'Done':'Next'} →</button>`,visual);
     if(step.kind==='roll')animateDice(b);
     if(step.kind==='result'){
@@ -392,16 +492,19 @@ function renderQueen() {
 }
 function renderVictory() {
   const winner = player(living()[0]);
-  frame(`<section class="hero"><div class="crown">♛</div><div class="phase">The kingdom stands</div><h1>${escapeHTML(winner.name)} wins.</h1><p>${SUITS[winner.suit]} ${NAMES[winner.suit]} is the last kingdom standing. This finished game remains saved on this device.</p></section><section class="panel"><h2>Another game?</h2><p class="muted small">Starting another game leaves this one in your Games list.</p><button class="button secondary wide" data-action="new-after-win">New game</button></section>`);
+  if(game.mode==='text')ensureTurnLink();
+  frame(`<section class="hero"><div class="crown">♛</div><div class="phase">The kingdom stands</div><h1>${escapeHTML(winner.name)} wins.</h1><p>${SUITS[winner.suit]} ${NAMES[winner.suit]} is the last kingdom standing. This finished game remains saved on this device.</p></section>${game.mode==='text'?`<section class="panel"><h2>Tell the group</h2>${turnLink?`<div class="actions"><button class="button" data-action="copy-turn">Copy result</button><button class="button secondary" data-action="share-turn">Share to app…</button></div>`:'<p class="muted">Preparing result link…</p>'}</section>`:''}<section class="panel"><h2>Another game?</h2><p class="muted small">Starting another game leaves this one in your Games list.</p><button class="button secondary wide" data-action="new-after-win">New game</button></section>`);
 }
 function renderStalemate() {
   frame(`<section class="hero"><div class="crown">♛</div><h1>No winner yet.</h1><p>This match reached the computer-play safety limit. Its full state is saved in your Games list.</p></section><section class="panel"><button class="button secondary wide" data-action="new-game">Start another game</button></section>`);
 }
 function render() {
+  if(linkLoading)return frame(`<section class="panel"><h2>Opening game link…</h2><p class="muted">Checking and decrypting the match.</p></section>`);
   if(incomingBackup) return renderImport();
   if(hubOpen) return renderHub();
   if(computerPlayback)return renderPlayback();
   if (!game) return renderStart();
+  if(game.mode==='text'&&textAccess()!==game.turn&&game.phase!=='victory')return renderTextWaiting();
   if (game.phase === 'victory') return renderVictory();
   if (game.phase === 'stalemate') return renderStalemate();
   if (game.view === null) return renderVeil();
@@ -444,8 +547,8 @@ function completeRefill() {
 }
 function finishAttacks() {
   game.refill = game.players.map((p,i) => p.alive && p.front.includes(null) && p.back.some(Boolean) ? i : -1).filter(i => i>=0);
-  for(const i of game.refill.filter(i=>player(i).cpu)) refillAI(player(i));
-  game.refill=game.refill.filter(i=>!player(i).cpu);
+  for(const i of game.refill.filter(i=>player(i).cpu||game.mode==='text')) refillAI(player(i));
+  game.refill=game.refill.filter(i=>!player(i).cpu&&game.mode!=='text');
   game.refillIndex=0; game.refillUndo=[]; game.selection=null;
   game.message='';
   if (game.refill.length) { game.phase='refill'; game.view=null; }
@@ -472,7 +575,10 @@ function resolveBattle() {
   } else if (b.result==='defend') defeat(game.turn,b.source.row,b.source.index);
   game.attacks++;
   game.pending=null; game.selection=null;
-  if (living().length<=1) { game.phase='victory'; game.view=null; return; }
+  if (living().length<=1) {
+    if(game.mode==='text'){game.lastBattles=game.currentBattles;game.currentBattles=[];game.turnNumber++;}
+    game.phase='victory'; game.view=null; return;
+  }
   game.phase='attack'; game.view=player(game.turn).cpu?null:game.turn; game.message=`${game.attacks} of 2 attacks used. ${game.attacks<2?'You may attack again or finish.':''}`;
   if (game.attacks>=2 || !player(game.turn).front.some(Boolean) && !player(game.turn).back.some(id=>id&&rank(id)==='10')) finishAttacks();
 }
@@ -501,7 +607,8 @@ function arrangeAI(p) {
 }
 function refillAI(p) {
   for(let i=0;i<3;i++) if(!p.front[i]) {
-    const from=p.back.findIndex(id=>id && rank(id)!=='K');
+    let from=p.back.findIndex(id=>id && rank(id)!=='K');
+    if(from<0)from=p.back.findIndex(Boolean);
     if(from<0) break;
     p.front[i]=p.back[from]; p.back[from]=null;
   }
@@ -594,6 +701,10 @@ function attack(targetPlayer,row,index) {
   let result=Math.max(...attackDice)>Math.max(...defendDice)?'attack':Math.max(...attackDice)<Math.max(...defendDice)?'defend':'tie';
   if (result==='defend' && rank(attackCard)==='A') result='tie';
   const sacrifice=result==='attack' && rank(defendCard)==='Q' ? queenNeighbor(player(targetPlayer),row,index) : [];
+  if(game.mode==='text') {
+    const chosen=sacrifice.length?sacrifice[weakestSacrifice({sacrifice})]:null;
+    game.currentBattles.push({actor:game.turn,defender:targetPlayer,source:sourceSlot,target:{row,index},attackCard,defendCard,attackDice,defendDice,result,sacrifice:chosen?{row:chosen.row,index:chosen.index}:null,beforeActor:[...player(game.turn).front,...player(game.turn).back],beforeDefender:[...player(targetPlayer).front,...player(targetPlayer).back]});
+  }
   game.pending={defender:targetPlayer,source:sourceSlot,target,attackCard,defendCard,attackDice,defendDice,result,sacrifice};
   game.phase='battle'; game.selection=null; game.message='';
 }
@@ -610,14 +721,65 @@ app.addEventListener('click', event => {
   }
   if (!button) return;
   const action=button.dataset.action, index=Number(button.dataset.index);
+  if(action==='open-link'){pasteOpen=true;render();return;}
+  if(action==='close-link'){pasteOpen=false;render();return;}
+  if(action==='import-link'){
+    const raw=app.querySelector('[data-import-url]')?.value.trim()||'';
+    let hash='';
+    try { hash=raw.startsWith('#')?raw:new URL(raw,location.href).hash; }
+    catch { /* Explain malformed links below. */ }
+    if(!/^#(?:turn|backup)=/.test(hash)){backupError='Paste a Regicidious turn or backup link.';render();return;}
+    pasteOpen=false;openIncomingHash(hash);return;
+  }
+  if(action==='backup-slot') {
+    try { const saved=readSlot(button.dataset.id);if(saved)prepareBackupFor(saved,button.dataset.id).catch(error=>{backupError='Could not prepare a backup link.';console.error(error);render();}); }
+    catch(error){backupError='Could not read this game for backup.';console.error(error);render();}
+    return;
+  }
+  if(action==='copy-backup' && backupText) { navigator.clipboard?.writeText(backupText).catch(()=>{});return; }
+  if(action==='copy-invite'&&inviteLinks[index]?.url){navigator.clipboard?.writeText(`${game.players[index].name}, join Regicidious as ${SUITS[index]}: ${inviteLinks[index].url}`).catch(()=>{});return;}
+  if(action==='share-invite'&&inviteLinks[index]?.url){
+    const message=`${game.players[index].name}, join Regicidious as ${SUITS[index]}: ${inviteLinks[index].url} `;
+    if(navigator.share)navigator.share({text:message}).catch(error=>{if(error.name!=='AbortError')console.error(error);});
+    return;
+  }
+  if(action==='copy-turn'&&game?.mode==='text'&&turnLink) { navigator.clipboard?.writeText(shareMessage(game,turnLink)).catch(()=>{});return; }
+  if(action==='share-turn'&&game?.mode==='text'&&turnLink) {
+    if(navigator.share)navigator.share({text:shareMessage(game,turnLink)+' '}).catch(error=>{if(error.name!=='AbortError'){turnLinkError='Sharing failed. Copy the message instead.';console.error(error);render();}});
+    else {turnLinkError='Sharing is unavailable here. Copy the message instead.';render();}
+    return;
+  }
+  if(action==='delete-game'){deleteCandidate=button.dataset.id;render();return;}
+  if(action==='cancel-delete'){deleteCandidate=null;render();return;}
+  if(action==='confirm-delete' && deleteCandidate===button.dataset.id){
+    const id=deleteCandidate;
+    try {
+      const doomed=readSlot(id);if(!doomed)throw Error('Match missing');
+      localStorage.removeItem(SLOT_PREFIX+id);
+      localStorage.removeItem(META_PREFIX+id);
+      if(doomed.mode==='text'){
+        const owned=localStorage.getItem(ACCESS_PREFIX+doomed.matchId);
+        if(owned!=null)localStorage.setItem(DELETED_PREFIX+doomed.matchId,owned);
+        localStorage.removeItem(ACCESS_PREFIX+doomed.matchId);
+      }
+      if(id===slotId){localStorage.removeItem(ACTIVE_KEY);slotId=null;game=null;}
+      deleteCandidate=null;hubNotice='Game removed from this device. A saved backup link can restore it.';
+      render();
+    }catch(error){storageError='Could not delete this game. Its remaining data was not cleared.';console.error(error);render();}
+    return;
+  }
   if(action==='backup' && game) {
-    backupText=location.href.split('#')[0]+'#backup='+StateCodec.encode(game);
-    navigator.clipboard?.writeText(backupText).catch(()=>{});
-    render(); return;
+    prepareBackupFor(game,slotId).catch(error=>{backupError='Could not prepare a backup link.';console.error(error);render();});return;
   }
   if(action==='toggle-sheet') { sheetOpen=!sheetOpen;render();return; }
   if(action==='reserve') { reserveOpen=!reserveOpen;render();return; }
   if(action==='opponent') { selectedOpponent=index;render();return; }
+  if(action==='opponent-nav') {
+    const owner=game.phase==='setup'?game.setup:game.phase==='refill'?game.refill[game.refillIndex]:game.turn;
+    const candidates=living().filter(i=>i!==owner);
+    if(candidates.length>1){const current=Math.max(0,candidates.indexOf(selectedOpponent));selectedOpponent=candidates[(current+Number(button.dataset.step)+candidates.length)%candidates.length];render();}
+    return;
+  }
   if(action==='games') { hubOpen=true;sheetOpen=false;reserveOpen=false;backupText='';render();return; }
   if(action==='new-game' || action==='new-after-win') { game=null;slotId=null;hubOpen=false;sheetOpen=false;reserveOpen=false;backupText='';render();return; }
   if(action==='open-game') {
@@ -625,10 +787,30 @@ app.addEventListener('click', event => {
     catch(error) { storageError='This game could not be opened. Its saved data was not changed.';render();console.error(error); }
     return;
   }
-  if(action==='keep-current') { incomingBackup=null;hubOpen=!game;history.replaceState(null,'',location.pathname+location.search);render();return; }
+  if(action==='keep-current') { incomingBackup=null;incomingKind=null;incomingSeat=null;hubOpen=!game;history.replaceState(null,'',location.pathname+location.search);render();return; }
   if(action==='restore-backup' && incomingBackup) {
-    const restored=incomingBackup;
-    if(commit(()=>{game=restored;slotId=makeSlotId();backupText='';hubOpen=false;})) { incomingBackup=null; history.replaceState(null,'',location.pathname+location.search); render(); }
+    const restored=incomingBackup,kind=incomingKind,seat=incomingSeat;
+    const existing=restored.mode==='text'?gameSlots().find(s=>s.game.matchId===restored.matchId):null;
+    if(restored.mode==='text'&&kind==='turn'&&!existing&&localStorage.getItem(DELETED_PREFIX+restored.matchId)!=null){
+      incomingBackup=null;incomingKind=null;incomingSeat=null;backupError='This game was deleted here. Restore your own seat with your backup or invite link; a turn link cannot claim another seat.';hubOpen=true;render();return;
+    }
+    if(existing){
+      const same=StateCodec.encode(existing.game)===StateCodec.encode(restored);
+      if(restored.turnNumber<existing.game.turnNumber||restored.turnNumber===existing.game.turnNumber&&!same){
+        incomingBackup=null;incomingKind=null;incomingSeat=null;
+        backupError='This link is older than your saved match or conflicts with it. Your saved game was kept.';
+        history.replaceState(null,'',location.pathname+location.search);hubOpen=true;render();return;
+      }
+    }
+    if(commit(()=>{game=restored;slotId=existing?.id??makeSlotId();backupText='';hubOpen=false;})) {
+      if(restored.mode==='text'&&seat!=null&&(!existing||textAccess()<0)){
+        localStorage.setItem(ACCESS_PREFIX+restored.matchId,String(seat));
+        localStorage.removeItem(DELETED_PREFIX+restored.matchId);
+      }
+      if(restored.mode==='text'&&kind==='turn'&&(!existing||existing.game.turnNumber<restored.turnNumber))startTextReplay(restored);
+      incomingBackup=null;incomingKind=null;incomingSeat=null;
+      history.replaceState(null,'',location.pathname+location.search);render();
+    }
     return;
   }
   if(storageError) return;
@@ -636,6 +818,7 @@ app.addEventListener('click', event => {
   if (action==='mode') { draft.mode=button.dataset.value; render(); return; }
   if (action==='start') return commit(newGame);
   if (!game) return;
+  if(game.mode==='text'&&textAccess()!==game.turn)return;
   commit(() => {
     if (action==='reveal') { game.view=game.phase==='setup'?game.setup:game.phase==='refill'?game.refill[game.refillIndex]:game.phase==='queen'?game.pending.defender:game.turn; return; }
     if (action==='slot') {
@@ -671,3 +854,22 @@ app.addEventListener('click', event => {
 });
 if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(console.error));
 render();
+async function openIncomingHash(hash){
+  linkLoading=true;backupError='';incomingBackup=null;incomingKind=null;incomingSeat=null;render();
+  try {
+    const kind=hash.startsWith('#turn=')?'turn':'backup';
+    const token=hash.slice(kind==='turn'?6:8);
+    let decoded=token.startsWith('E1.')?await LinkCodec.open(token):token;
+    if(kind==='backup'&&decoded.startsWith('P1:')){
+      const match=/^P1:([0-3]):(B1\..+)$/.exec(decoded);
+      if(!match)throw Error('Invalid seat backup');
+      incomingSeat=Number(match[1]);decoded=match[2];
+    }
+    const saved=validateState(StateCodec.decode(decoded));
+    if(kind==='turn'&&saved.mode!=='text')throw Error('Not a text match');
+    if(incomingSeat!=null&&(saved.mode!=='text'||incomingSeat>=saved.players.length))throw Error('Invalid seat backup');
+    incomingBackup=saved;incomingKind=kind;
+  } catch(error) { backupError='This game link is damaged, stale, or cannot be opened.';console.error(error); }
+  linkLoading=false;render();
+}
+if(linkLoading)openIncomingHash(location.hash);

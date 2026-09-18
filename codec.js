@@ -13,7 +13,7 @@ const StateCodec = (() => {
     const card=id=>byte(cardCode(id));
     const ranksPacked=ids=>{for(let i=0;i<ids.length;i+=2){const a=ids[i]==null?15:ranks.indexOf(ids[i].split('-')[1]);const b=ids[i+1]==null?15:ranks.indexOf(ids[i+1].split('-')[1]);byte(a|(b<<4));}};
     const dice=values=>{byte(values.length);for(const n of values)byte(n);};
-    byte(state.mode==='solo'?0:1);byte(state.players.length);byte(state.turn);number(state.round);
+    byte(state.mode==='solo'?0:state.mode==='text'?2:1);byte(state.players.length);byte(state.turn);number(state.round);
     byte(phases.indexOf(state.phase));byte(state.setup);byte(state.view==null?255:state.view);
     byte(state.selection?['front','back','reserve'].indexOf(state.selection.location):255);
     byte(state.selection?.index??255);byte(state.attacks);byte(state.kills);
@@ -38,6 +38,23 @@ const StateCodec = (() => {
     const undo=state.refillUndo||[];
     byte(undo.length);
     for(const move of undo){byte(move.owner);byte(move.from);byte(move.to);card(move.card);}
+    byte(0xa7);
+    const matchId=state.matchId||'';
+    byte(matchId?16:0);
+    if(matchId)for(let i=0;i<32;i+=2)byte(parseInt(matchId.slice(i,i+2),16));
+    number(state.turnNumber||1);
+    for(const events of [state.currentBattles||[],state.lastBattles||[]]){
+      byte(events.length);
+      for(const e of events){
+        byte(e.actor);byte(e.defender);
+        byte(e.source.index|(e.source.row==='back'?128:0));
+        byte(e.target.index|(e.target.row==='back'?128:0));
+        card(e.attackCard);card(e.defendCard);dice(e.attackDice);dice(e.defendDice);
+        byte(['tie','attack','defend'].indexOf(e.result));
+        byte(e.sacrifice?e.sacrifice.index|(e.sacrifice.row==='back'?128:0):255);
+        ranksPacked(e.beforeActor);ranksPacked(e.beforeDefender);
+      }
+    }
     // Detect accidental truncation/corruption. This is not a security signature.
     let check=2166136261;
     for(const n of out)check=Math.imul(check^n,16777619)>>>0;
@@ -63,7 +80,8 @@ const StateCodec = (() => {
     const ranksPacked=(count,owner)=>{const ids=[];for(let i=0;i<count;i+=2){const pair=byte();for(const nibble of [pair&15,pair>>4])if(ids.length<count){if(nibble!==15&&nibble>12)throw Error('Invalid rank');ids.push(nibble===15?null:`${owner}-${ranks[nibble]}`);}}return ids;};
     const dice=()=>{const count=byte();if(count>3)throw Error('Invalid dice');return Array.from({length:count},byte);};
     if(byte()!==0x52||byte()!==0x47||byte()!==1)throw Error('Unknown match version');
-    const mode=byte()===0?'solo':'local',count=byte(),turn=byte(),round=number();
+    const modeCode=byte(),mode=['solo','local','text'][modeCode],count=byte(),turn=byte(),round=number();
+    if(!mode)throw Error('Invalid mode');
     if(count<2||count>4||turn>=count)throw Error('Invalid players');
     const phase=phases[byte()],setup=byte(),viewCode=byte(),selectionCode=byte(),selectionIndex=byte();
     if(!phase)throw Error('Invalid phase');
@@ -92,10 +110,31 @@ const StateCodec = (() => {
       const undoCount=byte();if(undoCount>3)throw Error('Invalid refill history');
       for(let i=0;i<undoCount;i++)refillUndo.push({owner:byte(),from:byte(),to:byte(),card:card()});
     }
+    let matchId='',turnNumber=1,currentBattles=[],lastBattles=[];
+    if(at<data.length-4){
+      if(byte()!==0xa7)throw Error('Unknown match extension');
+      const idLength=byte();if(idLength!==0&&idLength!==16)throw Error('Invalid match ID');
+      for(let i=0;i<idLength;i++)matchId+=byte().toString(16).padStart(2,'0');
+      turnNumber=number();
+      const events=()=>{
+        const n=byte();if(n>2)throw Error('Invalid battle history');
+        return Array.from({length:n},()=>{
+          const actor=byte(),defender=byte(),sourceCode=byte(),targetCode=byte();
+          const source={row:sourceCode&128?'back':'front',index:sourceCode&127};
+          const target={row:targetCode&128?'back':'front',index:targetCode&127};
+          const attackCard=card(),defendCard=card(),attackDice=dice(),defendDice=dice();
+          const result=['tie','attack','defend'][byte()],sacrificeCode=byte();
+          const sacrifice=sacrificeCode===255?null:{row:sacrificeCode&128?'back':'front',index:sacrificeCode&127};
+          const beforeActor=ranksPacked(6,actor),beforeDefender=ranksPacked(6,defender);
+          return {actor,defender,source,target,attackCard,defendCard,attackDice,defendDice,result,sacrifice,beforeActor,beforeDefender};
+        });
+      };
+      currentBattles=events();lastBattles=events();
+    }
     if(at!==data.length-4)throw Error('Unexpected match data');
     return {version:1,mode,players,turn,round,phase,setup,view:viewCode===255?null:viewCode,
       selection:selectionCode===255?null:{location:['front','back','reserve'][selectionCode],index:selectionIndex},
-      attacks,kills,pending,refill,refillIndex,refillUndo,message,log};
+      attacks,kills,pending,refill,refillIndex,refillUndo,matchId,turnNumber,currentBattles,lastBattles,message,log};
   }
   return {encode,decode};
 })();
