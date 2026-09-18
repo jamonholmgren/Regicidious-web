@@ -1,6 +1,6 @@
 /* Versioned binary match format. No JSON is used for new saves or links. */
 const StateCodec = (() => {
-  const phases=['setup','buy','arrange','attack','battle','queen','refill','income','victory','stalemate'];
+  const phases=['setup','buy','arrange','attack','battle','queen','refill','income','victory','stalemate','invite'];
   const ranks=['A','2','3','4','5','6','7','8','9','10','J','Q','K'];
   const personas=[null,'serf','captain','warlord'];
   const playerFlags=p=>(p.alive?1:0)|(p.cpu?2:0)|(Math.max(0,personas.indexOf(p.persona))<<2);

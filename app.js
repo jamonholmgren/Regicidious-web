@@ -135,7 +135,8 @@ function validateState(saved) {
   saved.queenRule='cedric';
   const cols=saved.layout==='expanded'?4:3, boardLen=cols*2;
   if(!validIndex(saved.turn,count)||!validIndex(saved.setup,count)||!Number.isInteger(saved.round)||saved.round<1||saved.round>1000000)bad();
-  if(!['setup','buy','arrange','attack','battle','queen','refill','income','victory','stalemate'].includes(saved.phase)||saved.view!=null&&!validIndex(saved.view,count))bad();
+  if(!['invite','setup','buy','arrange','attack','battle','queen','refill','income','victory','stalemate'].includes(saved.phase)||saved.view!=null&&!validIndex(saved.view,count))bad();
+  if(saved.phase==='invite'&&(saved.mode!=='text'||saved.turn!==0||saved.setup!==0||saved.attacks!==0))bad();
   if(!Number.isInteger(saved.attacks)||saved.attacks>2||saved.attacks<0||!Number.isInteger(saved.kills)||saved.kills<0||saved.kills>2)bad();
   saved.usedAttacker??=saved.pending?.attackCard||saved.currentBattles?.at(-1)?.attackCard||null;
   if(saved.usedAttacker!=null&&!validCard(saved.usedAttacker,saved.turn))bad();
@@ -378,6 +379,7 @@ function newGame() {
   });
   game = {version:1,layout,queenRule:'cedric',mode:draft.mode,players,turn:0,round:1,phase:'setup',setup:0,view:draft.mode==='text'?0:null,selection:null,attacks:0,usedAttacker:null,scout:null,kills:0,pending:null,refill:[],refillIndex:0,refillUndo:[],matchId:makeMatchId(),turnNumber:1,currentBattles:[],lastBattles:[],message:'',log:[],history:null,startedAt:Math.floor(Date.now()/1000)*1000};
   game.history={origin:captureOrigin(game),events:[]};
+  if(draft.mode==='text')game.phase='invite';
   if(draft.mode==='text') persistSeat(game.matchId,0);
   navigator.storage?.persist?.().catch(() => {});
 }
@@ -410,7 +412,7 @@ function frame(content,compact=false) {
 function slotCard({id,game:g,dates}, finished) {
   const roster=g.players.map(p=>p.name).join(' vs ');
   const started=dates.started||g.startedAt||0;
-  const turn=finished?'Battle ended':g.phase==='setup'?`${g.players[g.setup].name} sets their lines`:`${g.players[g.turn].name} to move`;
+  const turn=finished?'Battle ended':g.phase==='invite'?'Inviting kingdoms':g.phase==='setup'?`${g.players[g.setup].name} sets their lines`:`${g.players[g.turn].name} to move`;
   const clashes=g.lastBattles?.length?`<p class="game-clashes">${escapeHTML(lastBattleSentence(g))}</p>`:'';
   return `<section class="panel game-slot ${finished?'':slotIsMine(g)?'game-ready':'game-waiting'}"><div class="phase">${g.mode==='solo'?'Solo':g.mode==='text'?'Text multiplayer':'Pass the phone'} · Round ${g.round}</div><h2 class="game-roster">${escapeHTML(roster)}</h2><p class="game-turn">${escapeHTML(turn)}</p>${clashes}<div class="game-dates">${gameDateButton(id,'last',dates.last)}${gameDateButton(id,'started',started)}</div><button class="button wide" data-action="open-game" data-id="${id}">${finished?'View game':'Continue →'}</button>${canReplay(g)?`<button class="button secondary wide" data-action="replay-game" data-id="${id}">Replay game</button>`:''}<div class="actions"><button class="button secondary" data-action="backup-slot" data-id="${id}">Make Backup</button><button class="button ${deleteCandidate===id?'danger':'ghost'}" data-action="delete-game" data-id="${id}">${deleteCandidate===id?'Confirm delete':'Delete game'}</button></div>${backupForSlot===id&&backupText?`<label class="field"><span>Private backup link</span><textarea readonly rows="3">${escapeHTML(backupText)}</textarea></label><button class="button secondary" data-action="copy-backup">Copy link</button>`:''}</section>`;
 }
@@ -428,15 +430,15 @@ function playerChips(saved) {
   return `<div class="dispatch-seats">${saved.players.map((p,i)=>`<span class="suit-chip">${SUITS[i]} ${escapeHTML(p.name)}</span>`).join('')}</div>`;
 }
 function renderImport() {
-  const g=incomingBackup, victory=g.phase==='victory', turn=incomingKind==='turn';
+  const g=incomingBackup, victory=g.phase==='victory', invitation=g.phase==='invite', turn=incomingKind==='turn';
   const winner=g.players.find(p=>p.alive);
   const focus=incomingSeat!=null&&g.players[incomingSeat]?g.players[incomingSeat]:g.players[g.turn];
-  const title=victory?'The final dispatch':turn?'A royal dispatch':'A private backup';
-  const headline=victory?`${escapeHTML(winner?.name||'A kingdom')} takes the crown`:`${escapeHTML(focus.name)}, your move`;
+  const title=victory?'The final dispatch':invitation?'A royal invitation':turn?'A royal dispatch':'A private backup';
+  const headline=victory?`${escapeHTML(winner?.name||'A kingdom')} takes the crown`:invitation?`${escapeHTML(focus.name)}, you are summoned`:`${escapeHTML(focus.name)}, your move`;
   const started=g.startedAt>0?dateText(g.startedAt):'unknown';
-  const body=victory?'Open to watch the final clash and the result. Your other saved games stay on this device.':turn?'Open to replay the last fights and continue if this seat is yours. Your other saved games stay on this device.':'Restoring adds another saved game. Your current games remain untouched.';
-  const go=victory?'View final clash':turn?'Open turn & replay':'Add backup';
-  const progress=g.phase==='setup'?`Battle lines · ${g.setup+1} of ${g.players.length}`:`Round ${g.round} · turn #${g.turnNumber}`;
+  const body=victory?'Open to watch the final clash and the result. Your other saved games stay on this device.':invitation?'Claim your kingdom now. Your battle lines open when the host declares war and sends the next link.':turn?'Open to replay the last fights and continue if this seat is yours. Your other saved games stay on this device.':'Restoring adds another saved game. Your current games remain untouched.';
+  const go=victory?'View final clash':invitation?'Claim my seat':turn?'Open turn & replay':'Add backup';
+  const progress=invitation?`${g.players.length} kingdoms gather`:g.phase==='setup'?`Battle lines · ${g.setup+1} of ${g.players.length}`:`Round ${g.round} · turn #${g.turnNumber}`;
   frame(`<section class="panel dispatch"><div class="phase">${title}</div><h2>${headline}</h2><p class="muted">${progress}</p>${playerChips(g)}<p class="muted small">Started ${escapeHTML(started)}</p><p class="small">${body}</p><div class="actions"><button class="button" data-action="restore-backup">${go}</button></div></section>`);
 }
 function renderTextWaiting() {
@@ -450,6 +452,18 @@ function renderTextWaiting() {
   const dispatch=`<section class="panel waiting-panel"><h2>${settingUp?'Send the setup':'Send the turn'}</h2>${settingUp?'':`<p class="muted small">${escapeHTML(lastBattleSentence(game))}</p>`}${replayLastButton()}${turnLinkError?`<p class="status">${escapeHTML(turnLinkError)}</p>`:''}${actions}<p class="muted small">The link contains the whole match and a key. Keep it in your game group; it deters casual peeking but cannot prevent cheating.</p></section>`;
   frame(`${summary}${dispatch}${invites}${pastePanel()}`);
 }
+function renderTextInvites() {
+  if(textAccess()!==0){
+    frame(`<section class="panel dispatch"><div class="phase">The call to arms</div><h1>Await the declaration</h1><p>${escapeHTML(player(0).name)} is gathering the kingdoms. Your invitation has been saved; your battle lines will open when the host sends the first turn.</p></section>`);
+    return;
+  }
+  ensureInvites();
+  const seats=game.players.slice(1).map((p,i)=>{
+    const seat=i+1,link=inviteLinks[seat]?.url;
+    return `<div class="invite-seat"><h3>${SUITS[seat]} ${escapeHTML(p.name)}</h3>${link?`<div class="actions"><button class="button secondary" data-action="copy-invite" data-index="${seat}">Copy invite</button><button class="button secondary" data-action="share-invite" data-index="${seat}">Share invite</button></div>`:'<p class="muted small">Preparing a private invitation…</p>'}</div>`;
+  }).join('');
+  frame(`<section class="panel dispatch"><div class="phase">Gather your kingdoms</div><h1>Send the royal invitations</h1><p>Each player needs their own named invite to claim a seat. Send these before declaring war.</p>${seats}<p class="flavor">The gauntlet has been thrown down.</p><button class="button wide" data-action="declare-war">Declare war!</button></section>`);
+}
 function renderStart() {
   const standalone=window.matchMedia?.('(display-mode: standalone)').matches||navigator.standalone;
   const install=!standalone&&!installDismissed?`<section class="install-tip" aria-label="Install Regicidious"><div><strong>Add to Home Screen</strong><p>On iPhone, open in Safari, tap Share, then Add to Home Screen. For text games, paste a received link into the installed app if Messages opens Safari.</p></div><button class="tip-close" data-action="dismiss-install" aria-label="Dismiss install tip">×</button></section>`:'';
@@ -460,7 +474,7 @@ function renderSetup() {
   const layouts=[['expanded','Expanded · 4 across, 7 cards'],['classic','Classic · 3 across, 6 cards']];
   const royalRules=`<p class="small muted">The first commander gets one opening attack. Later turns allow two attacks with different cards. A neighboring peasant lends the Queen a die when she attacks and falls in her place if she loses. When the King defends, a neighboring peasant takes a winning hit for him. The weakest adjacent peasant falls first.</p>`;
   const difficulty=draft.mode==='solo'?`<div class="label">Enemy commander</div><div class="actions mode-actions">${[['serf','Serf · easy'],['captain','Captain · normal'],['warlord','Warlord · hard']].map(([id,title])=>`<button class="button ${draft.difficulty===id?'':'ghost'}" data-action="difficulty" data-value="${id}">${title}</button>`).join('')}</div><p class="small muted">Serf charges recklessly. Captain weighs the odds. Warlord guards the crown and picks fights carefully.</p>`:'';
-  frame(`<div class="setup-heading"><button class="button ghost" data-action="setup-back">‹ Back</button><h1>New game</h1></div><section class="panel setup-panel"><p class="flavor">M’lord, our enemies are at the gates. We must prepare for war!</p><div class="label">Mode</div><div class="actions mode-actions">${modes.map(([mode,title])=>`<button class="button ${draft.mode===mode?'':'ghost'}" data-action="mode" data-value="${mode}">${title}</button>`).join('')}</div><div class="label">Battle lines</div><div class="actions mode-actions">${layouts.map(([layout,title])=>`<button class="button ${draft.layout===layout?'':'ghost'}" data-action="layout" data-value="${layout}">${title}</button>`).join('')}</div>${difficulty}${royalRules}<div class="label">${draft.mode==='solo'?'Computer opponents':'Players'}</div><div class="actions">${[2,3,4].map(n=>`<button class="button ${draft.count===n?'':'ghost'}" data-action="count" data-value="${n}">${draft.mode==='solo'?n-1:n}</button>`).join('')}</div><div class="stack" style="margin-top:18px">${draft.names.slice(0,draft.mode==='solo'?1:draft.count).map((name,i)=>`<label class="field"><span>${SUITS[i]} ${draft.mode==='solo'?'Your name':NAMES[i]}</span><input data-name="${i}" maxlength="24" value="${escapeHTML(name)}" autocomplete="off"></label>`).join('')}</div>${draft.mode==='text'?`<p class="small muted">Name every player now. After setting your own lines, send each person their invite. Links discourage casual peeking but are not cheat-proof.</p>`:''}<button class="button wide begin-game" data-action="start">Begin the war →</button></section>`);
+  frame(`<div class="setup-heading"><button class="button ghost" data-action="setup-back">‹ Back</button><h1>New game</h1></div><section class="panel setup-panel"><p class="flavor">M’lord, our enemies are at the gates. We must prepare for war!</p><div class="label">Mode</div><div class="actions mode-actions">${modes.map(([mode,title])=>`<button class="button ${draft.mode===mode?'':'ghost'}" data-action="mode" data-value="${mode}">${title}</button>`).join('')}</div><div class="label">Battle lines</div><div class="actions mode-actions">${layouts.map(([layout,title])=>`<button class="button ${draft.layout===layout?'':'ghost'}" data-action="layout" data-value="${layout}">${title}</button>`).join('')}</div>${difficulty}${royalRules}<div class="label">${draft.mode==='solo'?'Computer opponents':'Players'}</div><div class="actions">${[2,3,4].map(n=>`<button class="button ${draft.count===n?'':'ghost'}" data-action="count" data-value="${n}">${draft.mode==='solo'?n-1:n}</button>`).join('')}</div><div class="stack" style="margin-top:18px">${draft.names.slice(0,draft.mode==='solo'?1:draft.count).map((name,i)=>`<label class="field"><span>${SUITS[i]} ${draft.mode==='solo'?'Your name':NAMES[i]}</span><input data-name="${i}" maxlength="24" value="${escapeHTML(name)}" autocomplete="off"></label>`).join('')}</div>${draft.mode==='text'?`<p class="small muted">Name every player now. Send each their private invite on the next screen, then declare war to arrange your own lines. Links discourage casual peeking but are not cheat-proof.</p>`:''}<button class="button wide begin-game" data-action="start">${draft.mode==='text'?'Prepare invitations →':'Begin the war →'}</button></section>`);
 }
 function renderVeil() {
   const index = game.phase === 'setup' ? game.setup : game.phase === 'refill' ? game.refill[game.refillIndex] : game.phase === 'queen' ? game.pending.defender : game.turn;
@@ -929,6 +943,7 @@ function render() {
   if(matchReplay)return renderMatchReplay();
   if(computerPlayback)return renderPlayback();
   if (!game) return setupOpen?renderSetup():renderStart();
+  if(game.phase==='invite')return renderTextInvites();
   if(game.mode==='text'&&textAccess()!==game.turn&&game.phase!=='victory')return renderTextWaiting();
   if (game.phase === 'victory') return renderVictory();
   if (game.phase === 'stalemate') return renderStalemate();
@@ -1375,8 +1390,9 @@ app.addEventListener('click', event => {
     }
     if(existing){
       const same=StateCodec.encode(existing.game,{history:false})===StateCodec.encode(restored,{history:false});
-      const setupForward=restored.turnNumber===1&&existing.game.turnNumber===1&&existing.game.phase==='setup'&&
-        (restored.phase==='setup'&&restored.setup>existing.game.setup||restored.phase==='arrange'&&restored.turn===0);
+      const setupForward=restored.turnNumber===1&&existing.game.turnNumber===1&&
+        (existing.game.phase==='invite'&&(restored.phase==='setup'||restored.phase==='arrange')||
+        existing.game.phase==='setup'&&(restored.phase==='setup'&&restored.setup>existing.game.setup||restored.phase==='arrange'&&restored.turn===0));
       if(restored.turnNumber<existing.game.turnNumber||restored.turnNumber===existing.game.turnNumber&&!same&&!setupForward){
         incomingBackup=null;incomingKind=null;incomingSeat=null;
         backupError='This link is older than your saved match or conflicts with it. Your saved game was kept.';
@@ -1407,6 +1423,7 @@ app.addEventListener('click', event => {
   if (action==='mode') { draft.mode=button.dataset.value; render(); return; }
   if (action==='layout') { draft.layout=button.dataset.value==='classic'?'classic':'expanded'; render(); return; }
   if (action==='start') { rememberPlayerName(draft.names[0]);clearLinkError(); return commit(newGame); }
+  if (action==='declare-war'&&game?.mode==='text'&&game.phase==='invite'&&textAccess()===0) return commit(()=>{game.phase='setup';game.view=0;});
   if (action==='bolster' && game && ['setup','buy','arrange'].includes(game.phase)) {
     const owner=game.phase==='setup'?game.setup:game.turn;
     return commit(()=>bolsterLines(owner));
