@@ -124,6 +124,8 @@ const StateCodec = (() => {
     if(state.scout){byte(0xab);byte(state.scout.player);byte(state.scout.index|(state.scout.row==='back'?128:0));card(state.scout.id);}
     byte(0xac);for(let i=0;i<state.players.length;i++)byte(Math.max(0,emojis.indexOf(state.players[i].emoji)));
     if(state.restoreNotices?.length){byte(0xad);byte(state.restoreNotices.length);for(const notice of state.restoreNotices){byte(notice.seat);byte(notice.kind==='invite'?1:0);number(notice.turnNumber);}}
+    if(state.finishedAt){byte(0xae);number(Math.floor(state.finishedAt/1000));}
+    if(state.scoreVersion){byte(0xaf);byte(state.scoreVersion);}
     // Detect accidental truncation/corruption. This is not a security signature.
     let check=2166136261;
     for(const n of out)check=Math.imul(check^n,16777619)>>>0;
@@ -182,7 +184,7 @@ const StateCodec = (() => {
       const undoCount=byte();if(undoCount>3)throw Error('Invalid refill history');
       for(let i=0;i<undoCount;i++)refillUndo.push({owner:byte(),from:byte(),to:byte(),card:card()});
     }
-    let matchId='',turnNumber=1,currentBattles=[],lastBattles=[],history=null,startedAt=0,usedAttacker=null,scout=null,restoreNotices=[];
+    let matchId='',turnNumber=1,currentBattles=[],lastBattles=[],history=null,startedAt=0,usedAttacker=null,scout=null,restoreNotices=[],finishedAt=0,scoreVersion=0;
     if(at<data.length-4){
       if(byte()!==0xa7)throw Error('Unknown match extension');
       const idLength=byte();if(idLength!==0&&idLength!==16)throw Error('Invalid match ID');
@@ -210,6 +212,8 @@ const StateCodec = (() => {
       if(mag===0xab){const player=byte(),slot=byte();scout={player,row:slot&128?'back':'front',index:slot&127,id:card()};continue;}
       if(mag===0xac){for(const p of players){const code=byte();if(code>=emojis.length)throw Error('Invalid emoji');p.emoji=emojis[code];}continue;}
       if(mag===0xad){const n=byte();if(n>count)throw Error('Invalid restore notice');restoreNotices=Array.from({length:n},()=>{const seat=byte(),kind=byte(),noticedTurn=number();if(seat>=count||kind>1||noticedTurn<1)throw Error('Invalid restore notice');return {seat,kind:kind?'invite':'backup',turnNumber:noticedTurn};});continue;}
+      if(mag===0xae){finishedAt=number()*1000;continue;}
+      if(mag===0xaf){scoreVersion=byte();if(scoreVersion!==1)throw Error('Invalid score version');continue;}
       if(mag!==0xa8)throw Error('Unknown match extension');
       const originTurn=byte(),originSetup=byte(),originPhase=phases[byte()],originView=byte(),originRound=number();
       if(!originPhase)throw Error('Invalid history origin');
@@ -276,7 +280,7 @@ const StateCodec = (() => {
     players.forEach((p,i)=>{p.emoji??=emojis[i%emojis.length];});
     return {version:1,layout,queenRule,mode,players,turn,round,phase,setup,view:viewCode===255?null:viewCode,
       selection:selectionCode===255?null:{location:['front','back','reserve'][selectionCode],index:selectionIndex},
-      attacks,usedAttacker,scout,kills,pending,refill,refillIndex,refillUndo,matchId,turnNumber,currentBattles,lastBattles,message,log,history,startedAt,restoreNotices};
+      attacks,usedAttacker,scout,kills,pending,refill,refillIndex,refillUndo,matchId,turnNumber,currentBattles,lastBattles,message,log,history,startedAt,restoreNotices,finishedAt,scoreVersion};
   }
   return {encode,decode,emojis};
 })();

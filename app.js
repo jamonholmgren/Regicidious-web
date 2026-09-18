@@ -7,6 +7,7 @@ const DELETED_PREFIX = 'regicidious.deleted.';
 const ACTIVE_KEY = 'regicidious.active';
 const PLAYER_NAME_KEY = 'regicidious.player-name';
 const PLAYER_EMOJI_KEY = 'regicidious.player-emoji';
+const SCORES_KEY = 'regicidious.scores.v1';
 const MIGRATED_KEY = 'regicidious.legacy-imported';
 const SUITS = ['♠', '♥', '♣', '♦'];
 const NAMES = ['Spades', 'Hearts', 'Clubs', 'Diamonds'];
@@ -42,9 +43,12 @@ let pasteOpen=false;
 let inviteLinks={};
 let setupOpen=false,installDismissed=false,deleteTimer=null,buyPrompt=null,buyPromptTimer=null,completedOpen=false;
 let retreatArmed=null,retreatTimer=null;
+let scoresOpen=false,scoreLayout='expanded',scoreLink='',scoreLinkSource='',scoreLinkBusy=false,scoreLinkError='',incomingScores=null,scoreImportNotice='';
+let tutorialOpen=false,tutorialStep=0,tutorialRolling=false,tutorialDice=null,tutorialTimer=null;
 const expandedGameDates=new Set();
 const SEAT_COOKIE='rgseat_';
 try { installDismissed=localStorage.getItem('regicidious.install-tip.dismissed')==='1'; } catch { /* Storage warning appears elsewhere. */ }
+try { tutorialOpen=localStorage.getItem('regicidious.tutorial.open')==='1';tutorialStep=Math.min(8,Math.max(0,Number(localStorage.getItem('regicidious.tutorial.step'))||0)); } catch { /* The lesson can restart if preferences are unavailable. */ }
 const micro=n=>`${Math.round(n).toLocaleString()} µs`;
 
 try {
@@ -64,7 +68,7 @@ if(location.hash.startsWith('#backup=')) {
   else try { incomingBackup=validateState(StateCodec.decode(location.hash.slice(8)));incomingKind='backup'; }
   catch { backupError='This backup link is damaged or uses an unsupported version.'; }
 }
-if(location.hash.startsWith('#turn='))linkLoading=true;
+if(location.hash.startsWith('#turn=')||location.hash.startsWith('#scores='))linkLoading=true;
 
 const random = max => {
   const bytes = new Uint32Array(1);
@@ -156,6 +160,8 @@ function validateState(saved) {
   if(!Number.isInteger(saved.refillIndex)||saved.refillIndex<0||saved.refillIndex>saved.refill.length||saved.phase==='refill'&&saved.refillIndex>=saved.refill.length)bad();
   if(typeof saved.message!=='string'||saved.message.length>2048||!Array.isArray(saved.log)||saved.log.length>1000||saved.log.some(s=>typeof s!=='string'||s.length>2048))bad();
   saved.matchId??='';saved.turnNumber??=1;saved.currentBattles??=[];saved.lastBattles??=[];saved.history??=null;saved.startedAt??=0;
+  saved.finishedAt??=0;saved.scoreVersion??=0;
+  if(!Number.isInteger(saved.finishedAt)||saved.finishedAt<0||saved.finishedAt>4e12||![0,1].includes(saved.scoreVersion))bad();
   saved.restoreNotices??=[];
   if(!Array.isArray(saved.restoreNotices)||saved.restoreNotices.length>count||saved.restoreNotices.length&&saved.mode!=='text'||
     new Set(saved.restoreNotices.map(n=>n.seat)).size!==saved.restoreNotices.length||
@@ -183,6 +189,7 @@ function validateState(saved) {
     const cards=[...p.front,...p.back,...p.reserve,...p.deck].filter(id=>id!=null);
     if(cards.length>13||new Set(cards).size!==cards.length||cards.some(id=>!validCard(id,i)))bad();
   });
+  if(saved.scoreVersion===1&&(saved.mode!=='solo'||count!==2))bad();
   if(saved.selection!=null){
     const s=saved.selection,owner=saved.phase==='setup'?saved.setup:saved.phase==='refill'?saved.refill[saved.refillIndex]:saved.turn;
     if(!['front','back','reserve'].includes(s.location)||!validIndex(s.index,s.location==='reserve'?saved.players[owner]?.reserve.length:cols))bad();
@@ -322,6 +329,33 @@ function gameSlots() {
   }
   return slots.sort((a,b)=>a.id===slotId?-1:b.id===slotId?1:0);
 }
+function readScoreTable() {
+  const raw=localStorage.getItem(SCORES_KEY);
+  return raw?ScoreCodec.decode(raw):[];
+}
+function recordSoloScore(saved) {
+  const entry=ScoreCodec.entryFromGame(saved);
+  if(!entry)return;
+  const prior=readScoreTable();
+  const merged=ScoreCodec.merge(prior,[entry]);
+  if(merged.conflicts)scoreImportNotice='A restored game shares an existing score ID but differs from it. The existing score was kept.';
+  const encoded=ScoreCodec.encode(merged.entries);
+  if(localStorage.getItem(SCORES_KEY)!==encoded)localStorage.setItem(SCORES_KEY,encoded);
+}
+function scoreDate(seconds) {
+  return new Date(seconds*1000).toLocaleDateString('en-US',{month:'2-digit',day:'2-digit',year:'2-digit'});
+}
+function ensureScoreLink() {
+  let source;
+  try { source=ScoreCodec.encode(readScoreTable()); }
+  catch(error){scoreLinkError='Could not read the score table backup.';console.error(error);return;}
+  if(scoreLinkSource===source&&(scoreLink||scoreLinkBusy))return;
+  scoreLinkSource=source;scoreLink='';scoreLinkBusy=true;scoreLinkError='';
+  LinkCodec.seal(source).then(token=>{
+    if(scoreLinkSource!==source)return;
+    scoreLink=location.href.split('#')[0]+'#scores='+token;scoreLinkBusy=false;render();
+  }).catch(error=>{scoreLinkBusy=false;scoreLinkError='Could not make a score backup.';console.error(error);render();});
+}
 function slotIsMine(saved) {
   if(saved.mode!=='text')return true;
   const seat=Number(recallSeat(saved.matchId)??-1);
@@ -347,6 +381,7 @@ function commit(change) {
   const started=performance.now();
   try {
     change();
+    if(game.phase==='victory'&&game.scoreVersion===1&&!game.finishedAt)game.finishedAt=Math.floor(Date.now()/1000)*1000;
     timings.logic=Math.round((performance.now()-started)*1000);
     const saving=performance.now();
     localStorage.setItem(SLOT_PREFIX+slotId, encodeForBackup(game));
@@ -364,6 +399,7 @@ function commit(change) {
   // The match slot is the commit point. Auxiliary writes and painting cannot undo it.
   try { localStorage.setItem(ACTIVE_KEY,slotId); }
   catch (error) { console.error(error); }
+  if(game.phase==='victory')try { recordSoloScore(game); } catch(error){scoreLinkError='Victory saved, but the score table could not be updated.';console.error(error);}
   try {
     const now=Date.now(),dates=previousSlot===slotId?readDates(slotId):{started:now,last:now};
     localStorage.setItem(META_PREFIX+slotId,`${dates.started};${now}`);
@@ -397,7 +433,7 @@ function newGame() {
     if (p.cpu) arrangeAI(p);
     return p;
   });
-  game = {version:1,layout,queenRule:'cedric',mode:draft.mode,players,turn:0,round:1,phase:'setup',setup:0,view:draft.mode==='text'?0:null,selection:null,attacks:0,usedAttacker:null,scout:null,kills:0,pending:null,refill:[],refillIndex:0,refillUndo:[],matchId:makeMatchId(),turnNumber:1,currentBattles:[],lastBattles:[],message:'',log:[],history:null,startedAt:Math.floor(Date.now()/1000)*1000,restoreNotices:[]};
+  game = {version:1,layout,queenRule:'cedric',mode:draft.mode,players,turn:0,round:1,phase:'setup',setup:0,view:draft.mode==='text'?0:null,selection:null,attacks:0,usedAttacker:null,scout:null,kills:0,pending:null,refill:[],refillIndex:0,refillUndo:[],matchId:makeMatchId(),turnNumber:1,currentBattles:[],lastBattles:[],message:'',log:[],history:null,startedAt:Math.floor(Date.now()/1000)*1000,restoreNotices:[],finishedAt:0,scoreVersion:draft.mode==='solo'&&count===2?1:0};
   game.history={origin:captureOrigin(game),events:[]};
   if(draft.mode==='text')game.phase='invite';
   if(draft.mode==='text') persistSeat(game.matchId,0);
@@ -426,9 +462,9 @@ function cardHTML(id, action, location, index, opts={}) {
 }
 function lineHTML(cards, action, location, hidden=false) { return `<div class="line">${cards.map((id,i) => cardHTML(id,action,location,i,{hidden})).join('')}</div>`; }
 function frame(content,compact=false) {
-  const backup=game?.mode==='solo'&&!hubOpen&&!incomingBackup?`<section class="panel"><h3>Keep a backup</h3><p class="muted small">A backup link contains the whole match, including hidden cards. Keep it private.</p><button class="button secondary wide" data-action="backup">Make Backup</button>${backupText?`<label class="field" style="margin-top:12px"><span>Backup link</span><textarea readonly rows="3">${escapeHTML(backupText)}</textarea></label><button class="button secondary" data-action="copy-backup">Copy link</button>`:''}</section>`:'';
+  const backup=game?.mode==='solo'&&!hubOpen&&!incomingBackup&&!incomingScores&&!tutorialOpen&&!scoresOpen?`<section class="panel"><h3>Keep a backup</h3><p class="muted small">A backup link contains the whole match, including hidden cards. Keep it private.</p><button class="button secondary wide" data-action="backup">Make Backup</button>${backupText?`<label class="field" style="margin-top:12px"><span>Backup link</span><textarea readonly rows="3">${escapeHTML(backupText)}</textarea></label><button class="button secondary" data-action="copy-backup">Copy link</button>`:''}</section>`:'';
   const credit=`<p class="notice">Game by Shane Holmgren · Digital adaptation by Jamon Holmgren, <a href="https://jammin.games/" target="_blank" rel="noopener noreferrer">Jammin Games</a><br><span class="perf">Last move: logic ${micro(timings.logic)} · save ${micro(timings.save)} · UI ${micro(timings.render)}</span></p>`;
-  app.innerHTML = `<main class="app ${compact?'compact-app':''}"><header class="top ${compact?'compact-top':''}"><div class="brand">♛ Regicidious</div><div class="top-actions">${compact?`<button class="pill" data-action="toggle-sheet" aria-label="Game details">☰</button>`:''}<button class="pill" data-action="games">Games</button></div></header>${storageError?`<div class="status" role="alert">${storageError}</div>`:''}${backupError?`<div class="status" role="alert">${backupError}</div>`:''}${content}${!compact&&!game&&!hubOpen&&!incomingBackup?pastePanel():''}${compact?'':backup+credit}</main>`;
+  app.innerHTML = `<main class="app ${compact?'compact-app':''}"><header class="top ${compact?'compact-top':''}"><div class="brand">♛ Regicidious</div><div class="top-actions">${compact?`<button class="pill" data-action="toggle-sheet" aria-label="Game details">☰</button>`:''}<button class="pill" data-action="games">Games</button></div></header>${storageError?`<div class="status" role="alert">${storageError}</div>`:''}${backupError?`<div class="status" role="alert">${backupError}</div>`:''}${content}${!compact&&!game&&!hubOpen&&!incomingBackup&&!incomingScores&&!scoresOpen&&!tutorialOpen?pastePanel():''}${compact?'':backup+credit}</main>`;
 }
 function slotCard({id,game:g,dates}, finished) {
   const roster=g.players.map(p=>`${p.emoji} ${p.name}`).join(' vs ');
@@ -445,7 +481,73 @@ function renderHub() {
     frame(`<section class="hero"><div class="crown">♛</div><h1>Completed games</h1><p>Finished matches stay here for replay and backup.</p></section>${hubNotice?`<p class="status">${escapeHTML(hubNotice)}</p>`:''}${done.map(s=>slotCard(s,true)).join('')||'<p class="muted">No completed games on this device.</p>'}<div class="actions"><button class="button secondary wide" data-action="games">Back to games</button></div>`);
     return;
   }
-  frame(`<section class="hero"><div class="crown">♛</div><h1>Your games</h1><p>Active matches stay here until you delete them.</p></section>${hubNotice?`<p class="status">${escapeHTML(hubNotice)}</p>`:''}${active.map(s=>slotCard(s,false)).join('')||'<p class="muted">No games in progress.</p>'}<div class="actions">${done.length?`<button class="button secondary wide" data-action="completed-games">Completed games</button>`:''}<button class="button secondary wide" data-action="new-game">Start another game</button></div>${pastePanel()}`);
+  frame(`<section class="hero"><div class="crown">♛</div><h1>Your games</h1><p>Active matches stay here until you delete them.</p></section>${hubNotice?`<p class="status">${escapeHTML(hubNotice)}</p>`:''}${active.map(s=>slotCard(s,false)).join('')||'<p class="muted">No games in progress.</p>'}<div class="actions">${done.length?`<button class="button secondary wide" data-action="completed-games">Completed games</button>`:''}<button class="button secondary wide" data-action="new-game">Start another game</button><button class="button secondary wide" data-action="tutorial-open">Training grounds · tutorial</button><button class="button secondary wide" data-action="scores-open">Solo high scores</button></div>${pastePanel()}`);
+}
+function renderScores() {
+  let entries=[];
+  try { entries=readScoreTable(); } catch(error){scoreLinkError='This score table could not be read. Its saved data was kept.';console.error(error);}
+  ensureScoreLink();
+  const slots=new Map(gameSlots().filter(s=>s.game.phase==='victory').map(s=>[s.game.matchId,s]));
+  const rows=entries.filter(e=>e.layout===scoreLayout).map((e,i)=>{
+    const saved=slots.get(e.id),replay=saved&&canReplay(saved.game);
+    return `<section class="panel score-row"><div class="score-top"><strong>#${i+1} · ${e.score.toLocaleString()} points</strong><span>${scoreDate(e.date)}</span></div><p>${e.emoji} ${escapeHTML(e.name)} · ${e.difficulty==='serf'?'Serf':e.difficulty==='captain'?'Captain':'Warlord'} · ${e.turns} ${e.turns===1?'turn':'turns'}</p><p class="muted small">Match ${e.id.slice(0,8)}</p><div class="actions">${replay?`<button class="button secondary" data-action="replay-game" data-id="${saved.id}">Replay</button>`:`<span class="muted small">Replay unavailable${saved?'':' · restore the game backup'}</span>`}${saved?`<button class="button ghost" data-action="backup-slot" data-id="${saved.id}">Make game backup</button>`:''}</div>${saved&&backupForSlot===saved.id&&backupText?`<textarea readonly rows="3">${escapeHTML(backupText)}</textarea><button class="button secondary" data-action="copy-backup">Copy game link</button>`:''}</section>`;
+  }).join('');
+  frame(`<section class="score-heading"><div class="phase">Personal records · solo 1v1</div><h1>High scores</h1><p>Victory earns 1,000 points, plus up to 1,000 for speed. Each extra commander turn costs 50 speed points. Serf ×1, Captain ×1.25, Warlord ×1.5.</p></section>${scoreImportNotice?`<p class="status">${escapeHTML(scoreImportNotice)}</p>`:''}<div class="score-tabs"><button class="button ${scoreLayout==='expanded'?'':'secondary'}" data-action="score-layout" data-value="expanded">Expanded</button><button class="button ${scoreLayout==='classic'?'':'secondary'}" data-action="score-layout" data-value="classic">Classic</button></div>${rows||'<p class="muted">No solo 1v1 victories on this board yet.</p>'}<section class="panel"><h2>Keep your records</h2><p class="muted small">This link holds scores and match IDs, not the games or their cards. Back up games separately if you want to replay them.</p>${scoreLinkError?`<p class="status">${escapeHTML(scoreLinkError)}</p>`:''}<div class="actions"><button class="button secondary" data-action="copy-scores" ${scoreLink?'':'disabled'}>Copy table link</button><button class="button secondary" data-action="share-scores" ${scoreLink?'':'disabled'}>Send table link</button></div><details><summary>Show score table link</summary><textarea readonly rows="3">${escapeHTML(scoreLink||'Preparing link…')}</textarea></details></section>${pastePanel()}`);
+}
+function setTutorialStep(step) {
+  tutorialStep=step;tutorialDice=null;
+  try { localStorage.setItem('regicidious.tutorial.step',String(step)); }
+  catch { /* The lesson remains usable if storage is blocked. */ }
+  render();
+}
+function closeTutorial() {
+  clearTimeout(tutorialTimer);tutorialRolling=false;tutorialDice=null;tutorialOpen=false;
+  try { localStorage.setItem('regicidious.tutorial.open','0'); }
+  catch { /* The saved match is unaffected. */ }
+}
+function rollTutorial() {
+  if(tutorialRolling||![3,6].includes(tutorialStep))return;
+  tutorialRolling=true;let tick=0;
+  const enemyTurn=tutorialStep===6;
+  const tumble=()=>{
+    if(!tutorialOpen){tutorialRolling=false;return;}
+    if(++tick>=10){tutorialRolling=false;setTutorialStep(enemyTurn?7:4);return;}
+    tutorialDice={own:Array.from({length:enemyTurn?1:2},()=>1+Math.floor(Math.random()*6)),enemy:Array.from({length:enemyTurn?3:1},()=>1+Math.floor(Math.random()*6))};
+    render();tutorialTimer=setTimeout(tumble,110);
+  };
+  tumble();
+}
+function renderTutorial() {
+  const step=tutorialStep;
+  const headings=['The training grounds','Array thy lines','Choose a foe','The odds of battle','Your first victory','Collect thy spoils','The counterattack','A fallen champion','Ready for war'];
+  const words=[
+    'Meet Sir Strawhelm, master of the practice yard. This short 1v1 lesson uses scripted dice. No real game or score is changed.',
+    'Your front line faces his front line. Your King rests behind it. Tap your Peasant (8) to attack.',
+    'An attacker strikes a card in the enemy front line. Tap Sir Strawhelm’s leftmost hidden card.',
+    'It is a Peasant (4). Your 8 outranks the 4, so you roll two dice and Sir Strawhelm rolls one. The highest single die wins.',
+    'Your highest die is 5; his is 4. His Peasant falls. The unused 2 is dimmed. A draw would have spared both cards.',
+    'A defeated card earns one coin. Your Jack earns another at turn’s end: collect two. The opening commander gets only one attack; later turns allow two with different cards.',
+    'Sir Strawhelm swaps his Knight (10) to the front before his turn. Against your Peasant (8), his front-line Knight gets three dice. Watch the counterattack.',
+    'His 6 beats your 3, so your Peasant falls. Defenders can kill attackers, too. Your Queen and King still stand.',
+    'You have seen setup, attack, dice, income, and defense. In a real match, prepare your lines before fighting, spend two coins to hire a card, and keep your King alive.'
+  ];
+  if(step===0){frame(`<section class="panel tutorial-intro"><div class="crown">🪵</div><div class="phase">Guided 1v1 skirmish</div><h1>Sir Strawhelm awaits</h1><p>${words[0]}</p><button class="button wide" data-action="tutorial-next">Enter the yard →</button></section>`);return;}
+  const enemyTurn=step>=6;
+  const enemyFront=enemyTurn?[null,'1-10','1-A']:step>=5?[null,'1-7','1-A']:['1-4','1-7','1-A'];
+  const enemyBack=enemyTurn?['1-K','1-7','1-J']:['1-K','1-10','1-J'];
+  const ownFront=[step>=8?null:'0-8','0-Q','0-4'];
+  const ownBack=['0-K','0-J','0-10'];
+  const card=(id,owner,row,i)=>cardHTML(id,step===1&&owner===0&&row==='front'&&i===0?'tutorial-attacker':step===2&&owner===1&&row==='front'&&i===0?'tutorial-target':'',`tutorial-${owner}-${row}`,i,{hidden:owner===1&&!(row==='front'&&i===0&&step>=3&&step<=4)&&!(row==='front'&&i===1&&enemyTurn),className:step===4&&owner===1&&row==='front'&&i===0||step===7&&owner===0&&row==='front'&&i===0?'tutorial-fallen':''});
+  const row=(ids,owner,kind)=>`<div class="arena-row"><span class="arena-label">${kind} line</span><div class="line">${ids.map((id,i)=>card(id,owner,kind,i)).join('')}</div></div>`;
+  const dice=tutorialDice||(step===4?{own:[2,5],enemy:[4]}:step===7?{own:[3],enemy:[1,4,6]}:null);
+  const diceHTML=dice?`<div class="tutorial-dice"><div>${enemyTurn?'Sir Strawhelm':'You'} ${diceFaces(enemyTurn?dice.enemy:dice.own,!tutorialRolling)}</div><span>vs</span><div>${enemyTurn?'You':'Sir Strawhelm'} ${diceFaces(enemyTurn?dice.own:dice.enemy,!tutorialRolling)}</div></div>`:'';
+  const action=step===3||step===6?`<button class="button wide" data-action="tutorial-roll" ${tutorialRolling?'disabled':''}>${tutorialRolling?'The dice tumble…':'Roll the dice →'}</button>`:step===1||step===2?'':step===8?'<div class="actions"><button class="button" data-action="tutorial-finish">Play a real game →</button><button class="button secondary" data-action="tutorial-restart">Practice again</button></div>':`<button class="button wide" data-action="tutorial-next">${step===5?'Collect 2 coins →':'Continue →'}</button>`;
+  frame(`<section class="tutorial-page"><div class="phase">Training grounds · ${step}/8</div><h1>${headings[step]}</h1><p class="tutorial-guidance">${words[step]}</p><div class="tutorial-board"><div class="tutorial-side"><strong>🪵 Sir Strawhelm ♥</strong>${row(enemyBack,1,'back')}${row(enemyFront,1,'front')}</div>${diceHTML}<div class="tutorial-side"><strong>${draft.emojis[0]} You ♠ · ◉ ${step>=6?2:0}</strong>${row(ownFront,0,'front')}${row(ownBack,0,'back')}</div></div>${action}</section>`);
+}
+function renderScoreImport() {
+  const classic=incomingScores.filter(e=>e.layout==='classic').length;
+  const expanded=incomingScores.length-classic;
+  frame(`<section class="panel dispatch"><div class="phase">Personal score backup</div><h1>Restore high scores?</h1><p>${expanded} Expanded and ${classic} Classic records. This link holds no cards or game replays.</p><p>Your current scores and games stay here. Matching game IDs are merged, not duplicated.</p><button class="button wide" data-action="restore-scores">Merge score table</button></section>`);
 }
 function playerChips(saved) {
   return `<div class="dispatch-seats">${saved.players.map((p,i)=>`<span class="suit-chip">${p.emoji} ${SUITS[i]} ${escapeHTML(p.name)}</span>`).join('')}</div>`;
@@ -489,7 +591,7 @@ function renderTextInvites() {
 function renderStart() {
   const standalone=window.matchMedia?.('(display-mode: standalone)').matches||navigator.standalone;
   const install=!standalone&&!installDismissed?`<section class="install-tip" aria-label="Install Regicidious"><div><strong>Add to Home Screen</strong><p>On iPhone, open in Safari, tap Share, then Add to Home Screen. For text games, paste a received link into the installed app if Messages opens Safari.</p></div><button class="tip-close" data-action="dismiss-install" aria-label="Dismiss install tip">×</button></section>`:'';
-  frame(`<section class="launch"><div class="launch-crown">♛</div><h1>A battle in your pocket</h1><p>One opening strike. Two thereafter.</p><button class="button wide launch-start" data-action="setup-open">Start new game →</button>${gameSlots().length?'<button class="button secondary wide" data-action="games">Continue a saved game</button>':''}</section>${install}<details class="panel compact-rules"><summary>How to play</summary><p>Prepare your line, hire reinforcements, then attack once on the opening turn and up to twice thereafter with different cards. Solo, pass the phone, or exchange turns by text link.</p></details>`);
+  frame(`<section class="launch"><div class="launch-crown">♛</div><h1>A battle in your pocket</h1><p>One opening strike. Two thereafter.</p><button class="button wide launch-start" data-action="setup-open">Start new game →</button><button class="button secondary wide" data-action="tutorial-open">Training grounds · tutorial</button><button class="button secondary wide" data-action="scores-open">Solo high scores</button>${gameSlots().length?'<button class="button secondary wide" data-action="games">Continue a saved game</button>':''}</section>${install}<details class="panel compact-rules"><summary>How to play</summary><p>Prepare your line, hire reinforcements, then attack once on the opening turn and up to twice thereafter with different cards. Solo, pass the phone, or exchange turns by text link.</p></details>`);
 }
 function renderSetup() {
   const modes=[['solo','Solo vs computer'],['local','Pass the phone'],['text','Text-message multiplayer']];
@@ -956,14 +1058,19 @@ function renderQueen() {
 function renderVictory() {
   const winner = player(living()[0]);
   if(game.mode==='text')ensureTurnLink();
-  frame(`<section class="hero"><div class="crown">♛</div><div class="phase">The kingdom stands</div><h1>${escapeHTML(winner.name)} wins.</h1><p>${SUITS[winner.suit]} ${NAMES[winner.suit]} is the last kingdom standing.</p></section>${canReplayLast()||canReplay(game)?`<section class="panel"><h2>Watch it again</h2><p class="muted small">${canReplay(game)?'Replay every turn with all cards visible. The saved game is not changed.':'Watch the last fights again. Cards return to their hidden live faces afterward.'}</p>${replayLastButton()}${canReplay(game)?`<button class="button wide" data-action="replay-game">Replay game</button>`:''}</section>`:''}${game.mode==='text'?`<section class="panel"><h2>Tell the group</h2>${turnLink?`<div class="actions"><button class="button" data-action="copy-turn">Copy result</button><button class="button secondary" data-action="share-turn">Send result to group</button></div>`:'<p class="muted">Preparing result link…</p>'}</section>`:''}<section class="panel"><h2>Another game?</h2><p class="muted small">Starting another game leaves this one in your Games list.</p><button class="button secondary wide" data-action="new-after-win">New game</button></section>`);
+  const score=ScoreCodec.entryFromGame(game);
+  const scorePanel=score?`<section class="panel"><h2>${score.score.toLocaleString()} points</h2><p class="muted">${score.turns} commander ${score.turns===1?'turn':'turns'} against ${score.difficulty}. Your score is saved in the ${score.layout} table.</p><button class="button secondary wide" data-action="scores-open">See high scores</button></section>`:'';
+  frame(`<section class="hero"><div class="crown">♛</div><div class="phase">The kingdom stands</div><h1>${escapeHTML(winner.name)} wins.</h1><p>${SUITS[winner.suit]} ${NAMES[winner.suit]} is the last kingdom standing.</p></section>${scorePanel}${canReplayLast()||canReplay(game)?`<section class="panel"><h2>Watch it again</h2><p class="muted small">${canReplay(game)?'Replay every turn with all cards visible. The saved game is not changed.':'Watch the last fights again. Cards return to their hidden live faces afterward.'}</p>${replayLastButton()}${canReplay(game)?`<button class="button wide" data-action="replay-game">Replay game</button>`:''}</section>`:''}${game.mode==='text'?`<section class="panel"><h2>Tell the group</h2>${turnLink?`<div class="actions"><button class="button" data-action="copy-turn">Copy result</button><button class="button secondary" data-action="share-turn">Send result to group</button></div>`:'<p class="muted">Preparing result link…</p>'}</section>`:''}<section class="panel"><h2>Another game?</h2><p class="muted small">Starting another game leaves this one in your Games list.</p><button class="button secondary wide" data-action="new-after-win">New game</button></section>`);
 }
 function renderStalemate() {
   frame(`<section class="hero"><div class="crown">♛</div><h1>No winner yet.</h1><p>This match reached the computer-play safety limit. Its full state is saved in your Games list.</p></section><section class="panel"><button class="button secondary wide" data-action="new-game">Start another game</button></section>`);
 }
 function render() {
   if(linkLoading)return frame(`<section class="panel"><h2>Opening game link…</h2><p class="muted">Checking and decrypting the match.</p></section>`);
+  if(incomingScores)return renderScoreImport();
   if(incomingBackup) return renderImport();
+  if(tutorialOpen)return renderTutorial();
+  if(scoresOpen)return renderScores();
   if(hubOpen) return renderHub();
   if(matchReplay)return renderMatchReplay();
   if(computerPlayback)return renderPlayback();
@@ -1303,6 +1410,26 @@ app.addEventListener('click', event => {
   }
   if (!button) return;
   const action=button.dataset.action, index=Number(button.dataset.index);
+  if(action==='tutorial-open') { stopMatchReplay();tutorialOpen=true;scoresOpen=false;hubOpen=false;try{localStorage.setItem('regicidious.tutorial.open','1');}catch{}render();return; }
+  if(action==='tutorial-restart'){setTutorialStep(0);return;}
+  if(action==='tutorial-next'&&tutorialOpen&&[0,4,5,7].includes(tutorialStep)){setTutorialStep(tutorialStep+1);return;}
+  if(action==='tutorial-attacker'&&tutorialOpen&&tutorialStep===1){setTutorialStep(2);return;}
+  if(action==='tutorial-target'&&tutorialOpen&&tutorialStep===2){setTutorialStep(3);return;}
+  if(action==='tutorial-roll'&&tutorialOpen){rollTutorial();return;}
+  if(action==='tutorial-finish'&&tutorialOpen){closeTutorial();game=null;slotId=null;setupOpen=true;render();return;}
+  if(action==='scores-open'){scoresOpen=true;tutorialOpen=false;hubOpen=false;render();return;}
+  if(action==='score-layout'){scoreLayout=button.dataset.value==='classic'?'classic':'expanded';render();return;}
+  if(action==='copy-scores'&&scoreLink){navigator.clipboard?.writeText(scoreLink).catch(()=>{});return;}
+  if(action==='share-scores'&&scoreLink){if(navigator.share)navigator.share({text:`My Regicidious high scores: ${scoreLink}`}).catch(()=>{});else navigator.clipboard?.writeText(scoreLink).catch(()=>{});return;}
+  if(action==='restore-scores'&&incomingScores){
+    try{
+      const merged=ScoreCodec.merge(readScoreTable(),incomingScores);
+      localStorage.setItem(SCORES_KEY,ScoreCodec.encode(merged.entries));
+      scoreImportNotice=merged.conflicts?'Scores merged. Conflicting IDs kept their local records.':'Scores merged with your existing records.';
+      incomingScores=null;scoresOpen=true;hubOpen=false;history.replaceState(null,'',location.pathname+location.search);render();
+    }catch(error){backupError='Could not save the score table. Your existing records were kept.';console.error(error);render();}
+    return;
+  }
   if(action==='replay-last'&&game?.mode==='text'&&game.lastBattles?.length){
     sheetOpen=false;startTextReplay(game);render();return;
   }
@@ -1320,7 +1447,7 @@ app.addEventListener('click', event => {
     let hash='';
     try { hash=raw.startsWith('#')?raw:new URL(raw,location.href).hash; }
     catch { /* Explain malformed links below. */ }
-    if(!/^#(?:turn|backup)=/.test(hash)){backupError='Paste a Regicidious turn or backup link.';render();return;}
+    if(!/^#(?:turn|backup|scores)=/.test(hash)){backupError='Paste a Regicidious turn, game backup, or score link.';render();return;}
     pasteOpen=false;openIncomingHash(hash);return;
   }
   if(action==='backup-slot') {
@@ -1382,22 +1509,22 @@ app.addEventListener('click', event => {
     if(index!==owner&&living().includes(index)){selectedOpponent=index;render();}
     return;
   }
-  if(action==='games') { stopMatchReplay();incomingRequest++;lastIncomingLocationHash='';incomingBackup=null;incomingKind=null;incomingSeat=null;linkLoading=false;backupError='';history.replaceState(null,'',location.pathname+location.search);hubOpen=true;completedOpen=false;sheetOpen=false;reserveOpen=false;backupText='';render();return; }
+  if(action==='games') { stopMatchReplay();closeTutorial();scoresOpen=false;incomingRequest++;lastIncomingLocationHash='';incomingBackup=null;incomingScores=null;incomingKind=null;incomingSeat=null;linkLoading=false;backupError='';history.replaceState(null,'',location.pathname+location.search);hubOpen=true;completedOpen=false;sheetOpen=false;reserveOpen=false;backupText='';render();return; }
   if(action==='completed-games') { stopMatchReplay();hubOpen=true;completedOpen=true;sheetOpen=false;reserveOpen=false;backupText='';render();return; }
-  if(action==='new-game' || action==='new-after-win') { stopMatchReplay();clearLinkError();game=null;slotId=null;hubOpen=false;completedOpen=false;setupOpen=true;sheetOpen=false;reserveOpen=false;backupText='';render();return; }
+  if(action==='new-game' || action==='new-after-win') { stopMatchReplay();closeTutorial();scoresOpen=false;clearLinkError();game=null;slotId=null;hubOpen=false;completedOpen=false;setupOpen=true;sheetOpen=false;reserveOpen=false;backupText='';render();return; }
   if(action==='replay-game') {
     try {
       const id=button.dataset.id||slotId;
       const saved=id&&id===slotId&&game?game:readSlot(id);
       if(!saved||!canReplay(saved))throw Error('No replay');
-      game=saved;slotId=id;hubOpen=false;completedOpen=false;sheetOpen=false;reserveOpen=false;backupText='';
+      game=saved;slotId=id;hubOpen=false;scoresOpen=false;completedOpen=false;sheetOpen=false;reserveOpen=false;backupText='';
       localStorage.setItem(ACTIVE_KEY,slotId);storageError='';clearLinkError();
       if(!startMatchReplay(saved))throw Error('No frames');
     } catch(error) { storageError='This finished game cannot be replayed.';render();console.error(error); }
     return;
   }
   if(action==='open-game') {
-    try { const chosen=readSlot(button.dataset.id);if(!chosen)throw Error('Missing match');game=chosen;slotId=button.dataset.id;hubOpen=false;completedOpen=false;sheetOpen=false;reserveOpen=false;backupText='';localStorage.setItem(ACTIVE_KEY,slotId);storageError='';clearLinkError();render(); }
+    try { const chosen=readSlot(button.dataset.id);if(!chosen)throw Error('Missing match');game=chosen;slotId=button.dataset.id;hubOpen=false;scoresOpen=false;completedOpen=false;sheetOpen=false;reserveOpen=false;backupText='';localStorage.setItem(ACTIVE_KEY,slotId);storageError='';clearLinkError();render(); }
     catch(error) { storageError='This game could not be opened. Its saved data was not changed.';render();console.error(error); }
     return;
   }
@@ -1432,7 +1559,7 @@ app.addEventListener('click', event => {
     if(commit(()=>{
       const keep=(!restored.history?.origin && existing?.game.history?.origin)?existing.game.history:null;
       const localNotices=kind==='turn'?existing?.game.restoreNotices?.filter(n=>n.seat===Number(recallSeat(restored.matchId)))||[]:[];
-      game=restored;slotId=existing?.id??makeSlotId();backupText='';hubOpen=false;
+      game=restored;slotId=existing?.id??makeSlotId();backupText='';hubOpen=false;scoresOpen=false;
       if(localNotices.length)game.restoreNotices=[...game.restoreNotices.filter(n=>n.seat!==localNotices[0].seat),...localNotices];
       if(restored.mode==='text'&&kind==='backup'&&seat!=null&&restored.phase!=='victory'){
         game.restoreNotices=[...game.restoreNotices.filter(n=>n.seat!==seat),{seat,kind:restored.phase==='invite'?'invite':'backup',turnNumber:restored.turnNumber}];
@@ -1549,19 +1676,20 @@ window.addEventListener('keydown', event => {
   if(event.key==='Escape'){event.preventDefault();stopMatchReplay();render();}
 });
 if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(console.error));
-if(!/^#(?:turn|backup)=/.test(location.hash) && gameSlots().length)hubOpen=true;
+if(!/^#(?:turn|backup|scores)=/.test(location.hash) && gameSlots().length&&!tutorialOpen)hubOpen=true;
 render();
 let incomingRequest=0;
 let lastIncomingLocationHash='';
 async function openIncomingHash(hash){
   const request=++incomingRequest;
   computerPlayback=null;clearTimeout(replayTimer);stopMatchReplay();
-  linkLoading=true;backupError='';incomingBackup=null;incomingKind=null;incomingSeat=null;render();
+  linkLoading=true;backupError='';incomingBackup=null;incomingScores=null;incomingKind=null;incomingSeat=null;render();
   try {
-    const kind=hash.startsWith('#turn=')?'turn':'backup';
-    const token=hash.slice(kind==='turn'?6:8);
+    const kind=hash.startsWith('#turn=')?'turn':hash.startsWith('#scores=')?'scores':'backup';
+    const token=hash.slice(kind==='turn'?6:kind==='scores'?8:8);
     let decoded=token.startsWith('E1.')?await LinkCodec.open(token):token;
     if(request!==incomingRequest)return;
+    if(kind==='scores'){incomingScores=ScoreCodec.decode(decoded);linkLoading=false;render();return;}
     if(kind==='backup'&&decoded.startsWith('P1:')){
       const match=/^P1:([0-3]):(B1\..+)$/.exec(decoded);
       if(!match)throw Error('Invalid seat backup');
@@ -1577,8 +1705,8 @@ async function openIncomingHash(hash){
 }
 function readIncomingLocation(){
   const hash=location.hash;
-  if(!/^#(?:turn|backup)=/.test(hash)){lastIncomingLocationHash='';return;}
-  if(hash===lastIncomingLocationHash&&(linkLoading||incomingBackup||backupError))return;
+  if(!/^#(?:turn|backup|scores)=/.test(hash)){lastIncomingLocationHash='';return;}
+  if(hash===lastIncomingLocationHash&&(linkLoading||incomingBackup||incomingScores||backupError))return;
   lastIncomingLocationHash=hash;
   openIncomingHash(hash);
 }

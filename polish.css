@@ -65,3 +65,29 @@ body{min-height:100dvh;overflow-x:hidden;overscroll-behavior:none}
 .arena-row .card.back .center{font-size:2.15rem}
 .arena-row .card.selected::after{top:2px;right:4px;font-size:.75rem}
 @media(max-height:680px){.launch{min-height:50dvh}.install-tip p{font-size:.72rem}}
+/* Training grounds and compact personal records. */
+.tutorial-page,.score-heading{max-width:650px;margin:0 auto 20px}
+.tutorial-page h1,.score-heading h1{margin:8px 0 10px}
+.tutorial-guidance{margin:0 0 14px;line-height:1.42}
+.tutorial-board{display:grid;gap:10px;margin:14px 0}
+.tutorial-side{display:grid;gap:6px}
+.tutorial-side>strong{font-size:.85rem;color:var(--gold,#e8c077)}
+.tutorial-side .arena-row{display:grid;gap:3px}
+.tutorial-side .arena-label{font-size:.62rem;letter-spacing:.17em;text-transform:uppercase;opacity:.65}
+.tutorial-side .line{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+.tutorial-side .card{width:100%;min-width:0;aspect-ratio:1.38;min-height:0}
+.tutorial-side .card:disabled{opacity:1}
+.tutorial-side .card .rank{font-size:.9rem}
+.tutorial-side .card .center{font-size:1.5rem}
+.tutorial-side .card .card-role{font-size:.48rem}
+.tutorial-dice{display:flex;justify-content:center;align-items:center;gap:9px;padding:8px 5px;border-top:1px solid #ffffff28;border-bottom:1px solid #ffffff28;font-size:.75rem}
+.tutorial-dice>div{display:flex;align-items:center;gap:4px}
+.tutorial-dice .die{width:26px;height:26px;font-size:.9rem}
+.tutorial-fallen{opacity:.32!important;transform:scale(.94);transition:opacity .35s,transform .35s}
+.tutorial-intro{max-width:540px;margin:4vh auto;text-align:center}
+.score-row{margin-bottom:10px}
+.score-row p{margin:8px 0}
+.score-top{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.score-tabs{display:flex;gap:8px;margin:16px 0}
+.score-tabs button{flex:1}
+@media(max-height:700px){.tutorial-side .card{aspect-ratio:1.6}.tutorial-guidance{font-size:.9rem}}
