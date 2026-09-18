@@ -14,6 +14,8 @@ body{min-height:100dvh;overflow-x:hidden;overscroll-behavior:none}
 .waiting-panel .share-detail summary{color:#f5dfb1;cursor:pointer;font-size:.85rem}
 .waiting-panel .share-detail textarea{margin-top:9px}
 .game-roster{font-size:clamp(1.2rem,5vw,1.55rem)!important;line-height:1.16;overflow-wrap:anywhere}
+.game-slot.game-ready{border-color:#d3ad69;box-shadow:0 0 0 1px #d3ad6940,0 16px 40px #081a1640}
+.game-slot.game-waiting{opacity:.7}
 .game-turn{display:inline-block;margin:7px 0 0;padding:4px 9px;border:1px solid #8b9e80;border-radius:999px;color:#f1d39a;font-size:.78rem;line-height:1.25}
 .game-clashes{color:#d4dfd2;font-size:.85rem;line-height:1.42;margin:10px 0 0}
 .game-dates{display:grid;gap:2px;margin:12px 0 18px}

@@ -33,17 +33,17 @@
 .arena-row .card.empty{font-size:1.55rem}
 .arena-middle{height:clamp(50px,9dvh,76px);flex:0 0 auto;display:grid;place-items:center;border-block:1px solid #56766a60;margin:1px 0;color:#e8d4a7;overflow:hidden}
 .arena-instruction{max-width:330px;text-align:center;font-size:clamp(.68rem,1.8dvh,.84rem);line-height:1.25;padding:3px 10px}
-.clash-dice{width:100%;max-width:330px;display:flex;align-items:center;justify-content:center;gap:9px}
-.clash-side{min-width:0;display:flex;flex-direction:column;align-items:center;gap:3px;font-size:.72rem}
-.clash-versus{font-family:Georgia,serif;font-style:italic;font-size:.78rem;color:#9fbbab}
-.clash-dice .dice{gap:3px;justify-content:center}
-.clash-dice .die{width:26px;height:26px;border-radius:5px;font-size:.98rem}
+.clash-strip{width:100%;max-width:330px;display:grid;grid-template-columns:minmax(0,55%) minmax(0,1fr);align-items:center;gap:10px;padding:2px 0}
+.clash-dice{min-width:0;display:flex;align-items:center;justify-content:center;gap:4px}
+.clash-side{min-width:0;display:flex;flex-direction:column;align-items:center;gap:3px;font-size:.65rem}
+.clash-versus{font-family:Georgia,serif;font-style:italic;font-size:.72rem;color:#9fbbab}
+.clash-dice .dice{gap:2px;justify-content:center}
+.clash-dice .die{width:22px;height:22px;border-radius:5px;font-size:.86rem}
+.clash-analysis{min-width:0;text-align:left;color:#f5dfb1;font-size:clamp(.68rem,1.7dvh,.78rem);line-height:1.18;overflow-wrap:anywhere}
 .arena-dock{min-height:44px;flex:0 0 auto;display:flex;align-items:stretch;justify-content:center;gap:6px;max-width:330px;width:100%;margin:2px auto 0}
 .arena-dock .button{min-height:42px;padding:6px 10px;border-radius:10px;flex:1;font-size:.8rem}
 .arena-dock.with-last{flex-wrap:wrap;min-height:76px}
 .arena-dock .replay-last-btn{flex:1 0 100%;min-height:34px;font-size:.72rem;order:2}
-.arena-dock .battle-result{align-self:center;flex:2;font-size:.72rem;line-height:1.1}
-.arena-dock .battle-result[hidden]{display:none}
 .reserve-trigger{border:1px solid #779383;background:#203e33;color:#f6e1ae;border-radius:20px;padding:2px 10px;font-size:.69rem;align-self:center;min-height:25px}
 .reserve-overlay{position:absolute;z-index:5;left:10px;right:10px;bottom:calc(50px + env(safe-area-inset-bottom));border:1px solid #7e9b89;border-radius:15px;background:#18362c;padding:10px;box-shadow:0 15px 40px #071c17}
 .reserve-overlay .reserve{max-height:120px}
@@ -60,6 +60,7 @@
 .arena-row .reserve{padding:0;gap:5px;justify-content:center}
 .arena-row .reserve .card{min-width:0;width:auto;height:clamp(40px,8dvh,72px);flex:1}
 .replay-narration{text-align:center;color:#f5dfb1;font-size:.75rem;line-height:1.15;min-height:28px;display:grid;place-items:center}
+.replay-meta{text-align:center;color:#a9c6b4;font-size:.67rem;line-height:1.15}
 .arena-row .card.replay-dim{opacity:.28;filter:saturate(.3)}
 .arena-row .card.replay-active{outline:2px solid #f0c478;outline-offset:1px}
 .arena-row .card.replay-flip{animation:replay-flip .35s ease-out}
@@ -71,3 +72,4 @@
 @keyframes replay-win{0%,100%{transform:scale(1)}45%{transform:scale(1.11)}}
 @media(prefers-reduced-motion:reduce){.arena-row .card.replay-flip,.arena-row .card.replay-loser,.arena-row .card.replay-winner{animation:none}.arena-row .card.replay-loser{opacity:.2}}
 @media(max-height:600px){.compact-app{overflow-y:auto}.arena{min-height:525px}.arena-row .card{height:48px}.arena-middle{height:48px}}
+@media(max-width:350px){.clash-strip{gap:6px}.clash-dice{gap:2px}.clash-dice .die{width:20px;height:20px;font-size:.8rem}.clash-analysis{font-size:.66rem}}

@@ -50,7 +50,7 @@ try {
   slotId=localStorage.getItem(ACTIVE_KEY);
   if(slotId) game=readSlot(slotId);
 }
-catch { storageError = 'This browser could not read the saved game. Do not clear Safari website data.'; }
+catch { storageError = 'Could not load saved games. Please check browser storage settings.'; }
 if(location.hash.startsWith('#backup=')) {
   if(location.hash.slice(8).startsWith('E1.'))linkLoading=true;
   else try { incomingBackup=validateState(StateCodec.decode(location.hash.slice(8)));incomingKind='backup'; }
@@ -295,6 +295,11 @@ function gameSlots() {
   }
   return slots.sort((a,b)=>a.id===slotId?-1:b.id===slotId?1:0);
 }
+function slotIsMine(saved) {
+  if(saved.mode!=='text')return true;
+  const seat=Number(recallSeat(saved.matchId)??-1);
+  return seat>=0 && seat===(saved.phase==='setup'?saved.setup:saved.turn);
+}
 function pastePanel() {
   return pasteOpen?`<section class="panel"><h2>Open a game link</h2><p class="muted small">Paste a turn or backup link here if Messages opened Safari instead of your Home Screen app.</p><label class="field"><span>Game link</span><textarea data-import-url rows="3" placeholder="https://…/#turn=…"></textarea></label><div class="actions"><button class="button" data-action="import-link">Open link →</button><button class="button secondary" data-action="close-link">Cancel</button></div></section>`:`<button class="button secondary wide" data-action="open-link">Open a turn or backup link</button>`;
 }
@@ -387,7 +392,7 @@ function cardHTML(id, action, location, index, opts={}) {
 }
 function lineHTML(cards, action, location, hidden=false) { return `<div class="line">${cards.map((id,i) => cardHTML(id,action,location,i,{hidden})).join('')}</div>`; }
 function frame(content,compact=false) {
-  const backup=game?.mode==='solo'&&!hubOpen&&!incomingBackup?`<section class="panel"><h3>Keep a backup</h3><p class="muted small">A backup link contains the whole match, including hidden cards. Keep it private.</p><button class="button secondary wide" data-action="backup">Make backup link</button>${backupText?`<label class="field" style="margin-top:12px"><span>Backup link</span><textarea readonly rows="3">${escapeHTML(backupText)}</textarea></label><button class="button secondary" data-action="copy-backup">Copy link</button>`:''}</section>`:'';
+  const backup=game?.mode==='solo'&&!hubOpen&&!incomingBackup?`<section class="panel"><h3>Keep a backup</h3><p class="muted small">A backup link contains the whole match, including hidden cards. Keep it private.</p><button class="button secondary wide" data-action="backup">Make Backup</button>${backupText?`<label class="field" style="margin-top:12px"><span>Backup link</span><textarea readonly rows="3">${escapeHTML(backupText)}</textarea></label><button class="button secondary" data-action="copy-backup">Copy link</button>`:''}</section>`:'';
   const credit=`<p class="notice">Game by Shane Holmgren · Digital adaptation by Jamon Holmgren, <a href="https://jammin.games/" target="_blank" rel="noopener noreferrer">Jammin Games</a><br><span class="perf">Last move: logic ${micro(timings.logic)} · save ${micro(timings.save)} · UI ${micro(timings.render)}</span></p>`;
   app.innerHTML = `<main class="app ${compact?'compact-app':''}"><header class="top ${compact?'compact-top':''}"><div class="brand">♛ Regicidious</div><div class="top-actions">${compact?`<button class="pill" data-action="toggle-sheet" aria-label="Game details">☰</button>`:''}<button class="pill" data-action="games">Games</button></div></header>${storageError?`<div class="status" role="alert">${storageError}</div>`:''}${backupError?`<div class="status" role="alert">${backupError}</div>`:''}${content}${!compact&&!game&&!hubOpen&&!incomingBackup?pastePanel():''}${compact?'':backup+credit}</main>`;
 }
@@ -396,11 +401,11 @@ function slotCard({id,game:g,dates}, finished) {
   const started=dates.started||g.startedAt||0;
   const turn=finished?'Battle ended':g.phase==='setup'?`${g.players[g.setup].name} sets their lines`:`${g.players[g.turn].name} to move`;
   const clashes=g.lastBattles?.length?`<p class="game-clashes">${escapeHTML(lastBattleSentence(g))}</p>`:'';
-  return `<section class="panel"><div class="phase">${g.mode==='solo'?'Solo':g.mode==='text'?'Text multiplayer':'Pass the phone'} · Round ${g.round}</div><h2 class="game-roster">${escapeHTML(roster)}</h2><p class="game-turn">${escapeHTML(turn)}</p>${clashes}<div class="game-dates">${gameDateButton(id,'last',dates.last)}${gameDateButton(id,'started',started)}</div><button class="button wide" data-action="open-game" data-id="${id}">${finished?'View game':'Continue →'}</button>${canReplay(g)?`<button class="button secondary wide" data-action="replay-game" data-id="${id}">Replay game</button>`:''}<div class="actions"><button class="button secondary" data-action="backup-slot" data-id="${id}">Make backup link</button><button class="button ${deleteCandidate===id?'danger':'ghost'}" data-action="delete-game" data-id="${id}">${deleteCandidate===id?'Confirm delete':'Delete game'}</button></div>${backupForSlot===id&&backupText?`<label class="field"><span>Private backup link</span><textarea readonly rows="3">${escapeHTML(backupText)}</textarea></label><button class="button secondary" data-action="copy-backup">Copy link</button>`:''}</section>`;
+  return `<section class="panel game-slot ${finished?'':slotIsMine(g)?'game-ready':'game-waiting'}"><div class="phase">${g.mode==='solo'?'Solo':g.mode==='text'?'Text multiplayer':'Pass the phone'} · Round ${g.round}</div><h2 class="game-roster">${escapeHTML(roster)}</h2><p class="game-turn">${escapeHTML(turn)}</p>${clashes}<div class="game-dates">${gameDateButton(id,'last',dates.last)}${gameDateButton(id,'started',started)}</div><button class="button wide" data-action="open-game" data-id="${id}">${finished?'View game':'Continue →'}</button>${canReplay(g)?`<button class="button secondary wide" data-action="replay-game" data-id="${id}">Replay game</button>`:''}<div class="actions"><button class="button secondary" data-action="backup-slot" data-id="${id}">Make Backup</button><button class="button ${deleteCandidate===id?'danger':'ghost'}" data-action="delete-game" data-id="${id}">${deleteCandidate===id?'Confirm delete':'Delete game'}</button></div>${backupForSlot===id&&backupText?`<label class="field"><span>Private backup link</span><textarea readonly rows="3">${escapeHTML(backupText)}</textarea></label><button class="button secondary" data-action="copy-backup">Copy link</button>`:''}</section>`;
 }
 function renderHub() {
   const slots=gameSlots();
-  const active=slots.filter(s=>s.game.phase!=='victory'&&s.game.phase!=='stalemate');
+  const active=slots.filter(s=>s.game.phase!=='victory'&&s.game.phase!=='stalemate').sort((a,b)=>Number(slotIsMine(b.game))-Number(slotIsMine(a.game))||(b.dates.last||0)-(a.dates.last||0));
   const done=slots.filter(s=>s.game.phase==='victory'||s.game.phase==='stalemate');
   if(completedOpen){
     frame(`<section class="hero"><div class="crown">♛</div><h1>Completed games</h1><p>Finished matches stay here for replay and backup.</p></section>${hubNotice?`<p class="status">${escapeHTML(hubNotice)}</p>`:''}${done.map(s=>slotCard(s,true)).join('')||'<p class="muted">No completed games on this device.</p>'}<div class="actions"><button class="button secondary wide" data-action="games">Back to games</button></div>`);
@@ -427,7 +432,7 @@ function renderTextWaiting() {
   ensureTurnLink();
   ensureInvites();
   const p=player(game.turn);
-  const invites=textAccess()===0?`<section class="panel"><h2>Invite players to their own seats</h2><p class="small muted">Send each player only their named invite once. Invites bind their device to that seat, even before their first turn.</p><p class="small muted">This device remembers your seat until Safari website data is cleared. No web app can promise otherwise.</p>${game.players.map((q,i)=>i===0?'':`<p>${escapeHTML(q.name)} ${SUITS[i]}</p>${inviteLinks[i]?.url?`<div class="actions"><button class="button secondary" data-action="copy-invite" data-index="${i}">Copy invite</button><button class="button secondary" data-action="share-invite" data-index="${i}">Share…</button></div><textarea readonly rows="2">${escapeHTML(inviteLinks[i].url)}</textarea>`:'<p class="small muted">Preparing invite…</p>'}`).join('')}</section>`:'';
+  const invites=textAccess()===0?`<section class="panel"><h2>Invite players to their own seats</h2><p class="small muted">Send each player only their named invite once. Invites bind their device to that seat, even before their first turn.</p>${game.players.map((q,i)=>i===0?'':`<p>${escapeHTML(q.name)} ${SUITS[i]}</p>${inviteLinks[i]?.url?`<div class="actions"><button class="button secondary" data-action="copy-invite" data-index="${i}">Copy invite</button><button class="button secondary" data-action="share-invite" data-index="${i}">Share…</button></div><textarea readonly rows="2">${escapeHTML(inviteLinks[i].url)}</textarea>`:'<p class="small muted">Preparing invite…</p>'}`).join('')}</section>`:'';
   const settingUp=game.phase==='setup';
   const summary=`<section class="waiting-summary"><div class="crown">${SUITS[game.turn]}</div><div><div class="phase">${settingUp?`Battle lines · ${game.setup+1} of ${game.players.length}`:`Text multiplayer · turn #${game.turnNumber}`}</div><h1>${escapeHTML(p.name)}’s ${settingUp?'battle lines':'turn'}</h1><p>Send the next link to ${escapeHTML(p.name)}. Your copy waits here.</p></div></section>`;
   const actions=turnLink?`<div class="actions"><button class="button" data-action="copy-turn">Copy message</button><button class="button secondary" data-action="share-turn">Share to app…</button></div><details class="share-detail"><summary>Show message and link</summary><textarea readonly rows="5" aria-label="Message and link">${escapeHTML(shareMessage(game,turnLink))}</textarea></details>`:'<p class="muted small">Preparing a private turn link…</p>';
@@ -482,7 +487,7 @@ function arenaRow(owner,row,own,mode,visual) {
 function arenaDetails() {
   if(!sheetOpen)return '';
   const share=game.mode==='text'?`<p class="small muted">Turn #${game.turnNumber}: ${escapeHTML(player(game.turn).name)}</p>${replayLastButton()}<p class="small muted">Finish your turn to create the next player's link.</p>`:'';
-  const backup=`<button class="button secondary wide" data-action="backup">Make backup link</button>${backupForSlot===slotId&&backupText?`<textarea readonly rows="3">${escapeHTML(backupText)}</textarea><button class="button secondary" data-action="copy-backup">Copy backup link</button>`:''}`;
+  const backup=`<button class="button secondary wide" data-action="backup">Make Backup</button>${backupForSlot===slotId&&backupText?`<textarea readonly rows="3">${escapeHTML(backupText)}</textarea><button class="button secondary" data-action="copy-backup">Copy backup link</button>`:''}`;
   return `<div class="sheet-scrim" data-action="toggle-sheet"></div><section class="arena-sheet" role="dialog" aria-label="Game details"><div class="row"><h3>Game details</h3><button class="button ghost" data-action="toggle-sheet">Close</button></div><p class="muted small">Round ${game.round} · ${escapeHTML(player(game.turn).name)} · ${escapeHTML(game.phase)}</p><p class="small">${escapeHTML(game.message||'Tap a card to select it. The highest individual die wins.')}</p>${game.log?.length?`<div class="small muted">${game.log.slice(-6).reverse().map(item=>`<p>${escapeHTML(item)}</p>`).join('')}</div>`:''}${share}${backup}<p class="small muted">Game by Shane Holmgren · Digital adaptation by Jamon Holmgren, <a href="https://jammin.games/" target="_blank" rel="noopener noreferrer">Jammin Games</a>.</p><p class="small muted">Last move: logic ${micro(timings.logic)} · save ${micro(timings.save)} · UI ${micro(timings.render)}.</p></section>`;
 }
 function arenaReserve(owner, visual) {
@@ -505,7 +510,8 @@ function renderArena(owner,mode,intro,controls,visual) {
   let middle=`<div class="arena-instruction">${escapeHTML(middleText)}</div>`;
   if(mode==='battle'||visual?.showDice) {
     const b=game.pending;
-    middle=`<div class="clash-dice" data-dice-lane aria-live="off"><div class="clash-side"><span>${label(b.defendCard)}</span><div class="dice">${b.defendDice.map(()=>`<span class="die">?</span>`).join('')}</div></div><span class="clash-versus">vs</span><div class="clash-side"><span>${label(b.attackCard)}</span><div class="dice">${b.attackDice.map(()=>`<span class="die">?</span>`).join('')}</div></div></div>`;
+    const analysis=mode==='battle'?`<div class="clash-analysis battle-result" data-outcome="${escapeHTML(middleText)}" aria-live="polite">The dice tumble…</div>`:`<div class="clash-analysis" aria-live="polite">${escapeHTML(middleText)}</div>`;
+    middle=`<div class="clash-strip"><div class="clash-dice" data-dice-lane aria-live="off"><div class="clash-side"><span>${label(b.defendCard)}</span><div class="dice">${b.defendDice.map(()=>`<span class="die">?</span>`).join('')}</div></div><span class="clash-versus">vs</span><div class="clash-side"><span>${label(b.attackCard)}</span><div class="dice">${b.attackDice.map(()=>`<span class="die">?</span>`).join('')}</div></div></div>${analysis}</div>`;
   }
   const own=player(owner);
   const seenReserve=visual?.revealAll&&target?.reserve?.length?`<div class="arena-row"><span class="arena-label">Reserve</span><div class="reserve">${target.reserve.map((id,i)=>cardHTML(id,'','reserve',i,{owner:opponent,row:'reserve'})).join('')}</div></div>`:'';
@@ -563,7 +569,7 @@ function renderBattle() {
   const b = game.pending;
   const rescue=b.sacrifice.length?b.sacrifice[weakestSacrifice(b)]:null;
   const outcome = b.result === 'tie' ? 'A draw. Both survive.' : rescue?`${player(b.result==='attack'?b.defender:game.turn).name}’s Queen is saved; ${cardTitle(rescue.id)} falls.`:b.result === 'attack' ? `${player(b.defender).name} loses ${label(b.defendCard)}.` : `${player(game.turn).name} loses ${label(b.attackCard)}.`;
-  renderArena(game.turn,'battle',outcome,`<div class="battle-result" aria-live="polite" hidden>${escapeHTML(outcome)}</div><button class="button" data-action="battle-next" disabled>Continue →</button>`);
+  renderArena(game.turn,'battle',outcome,`<button class="button" data-action="battle-next" disabled>Continue →</button>`);
   animateDice(b);
 }
 function animateDice(b) {
@@ -575,7 +581,7 @@ function animateDice(b) {
     faces.forEach((face,i)=>{face.textContent=numbers[i];});
     lane.setAttribute('aria-live','polite');
     const result=app.querySelector('.battle-result'),button=app.querySelector('[data-action="battle-next"]');
-    if(result)result.hidden=false;
+    if(result)result.textContent=result.dataset.outcome;
     if(button)button.disabled=false;
     try { navigator.vibrate?.(18); } catch { /* iOS may not support vibration. */ }
   };
@@ -642,7 +648,7 @@ function advanceReplay() {
 }
 function renderPlayback() {
   const playback=computerPlayback,step=playback.frames[playback.index];
-  const holdForContinue=game.mode==='solo' && playback.index===playback.frames.length-1 && step.kind==='result';
+  const holdForContinue=step.kind==='result';
   const finalGame=game;
   game=step.state;
   try {
@@ -672,13 +678,14 @@ function renderPlayback() {
       }
     }
     const visual={kind:step.kind,opponent:attacker,source,target,showTarget:step.kind!=='reveal',revealTarget:['roll','result'].includes(step.kind),showDice:['roll','result'].includes(step.kind),hideOwnOthers:playback.textReplay,loser,winner};
-    renderArena(owner,'replay',narration,`<div class="replay-narration" aria-live="polite">${escapeHTML(narration)}</div><button class="button secondary" data-action="replay-next">${holdForContinue?'Continue':playback.index===playback.frames.length-1?'Done':'Next'} →</button>`,visual);
+    renderArena(owner,'replay',narration,`<button class="button secondary" data-action="replay-next">${holdForContinue?'Continue':'Next'} →</button>`,visual);
     if(step.kind==='roll')animateDice(b);
     if(step.kind==='result'){
       const faces=app.querySelectorAll('[data-dice-lane] .die');
       [...faces].forEach((face,i)=>{face.textContent=[...b.defendDice,...b.attackDice][i];});
     }
     clearTimeout(replayTimer);
+    replayTimer=null;
     if(!holdForContinue)replayTimer=setTimeout(advanceReplay,{reveal:600,target:650,roll:900,result:700}[step.kind]);
   } finally {game=finalGame;}
 }
@@ -879,8 +886,8 @@ function renderMatchReplay() {
     const actor=player(step.turn||game.turn);
     const intro=`Round ${step.round} · ${actor.name} · ${step.phase} · ${matchReplay.index+1}/${matchReplay.frames.length}`;
     const atStart=matchReplay.index===0,atEnd=matchReplay.index===matchReplay.frames.length-1;
-    const controls=`<div class="replay-narration" aria-live="polite">${escapeHTML(step.narration)}</div><div class="replay-nav"><button class="button ghost" data-action="match-replay-exit">Exit</button><button class="button secondary" data-action="match-replay-prev" data-hold="prev" ${atStart?'disabled':''} aria-label="Previous step">‹</button><button class="button secondary" data-action="match-replay-next" data-hold="next" ${atEnd?'disabled':''} aria-label="Next step">›</button><button class="button ${matchReplay.autoplay?'':'ghost'}" data-action="match-replay-auto">${matchReplay.autoplay?'Pause':'Auto'}</button></div>`;
-    renderArena(step.owner,'replay',intro,controls,step.visual);
+    const controls=`<div class="replay-meta">${escapeHTML(intro)}</div><div class="replay-nav"><button class="button ghost" data-action="match-replay-exit">Exit</button><button class="button secondary" data-action="match-replay-prev" data-hold="prev" ${atStart?'disabled':''} aria-label="Previous step">‹</button><button class="button secondary" data-action="match-replay-next" data-hold="next" ${atEnd?'disabled':''} aria-label="Next step">›</button><button class="button ${matchReplay.autoplay?'':'ghost'}" data-action="match-replay-auto">${matchReplay.autoplay?'Pause':'Auto'}</button></div>`;
+    renderArena(step.owner,'replay',step.narration,controls,step.visual);
     const b=game.pending;
     if(step.visual?.kind==='roll'&&b)animateDice(b);
     if(step.visual?.kind==='result'&&b){
@@ -896,7 +903,7 @@ function renderQueen() {
 function renderVictory() {
   const winner = player(living()[0]);
   if(game.mode==='text')ensureTurnLink();
-  frame(`<section class="hero"><div class="crown">♛</div><div class="phase">The kingdom stands</div><h1>${escapeHTML(winner.name)} wins.</h1><p>${SUITS[winner.suit]} ${NAMES[winner.suit]} is the last kingdom standing. This finished game remains saved on this device.</p></section>${canReplayLast()||canReplay(game)?`<section class="panel"><h2>Watch it again</h2><p class="muted small">${canReplay(game)?'Replay every turn with all cards visible. The saved game is not changed.':'Watch the last fights again. Cards return to their hidden live faces afterward.'}</p>${replayLastButton()}${canReplay(game)?`<button class="button wide" data-action="replay-game">Replay game</button>`:''}</section>`:''}${game.mode==='text'?`<section class="panel"><h2>Tell the group</h2>${turnLink?`<div class="actions"><button class="button" data-action="copy-turn">Copy result</button><button class="button secondary" data-action="share-turn">Share to app…</button></div>`:'<p class="muted">Preparing result link…</p>'}</section>`:''}<section class="panel"><h2>Another game?</h2><p class="muted small">Starting another game leaves this one in your Games list.</p><button class="button secondary wide" data-action="new-after-win">New game</button></section>`);
+  frame(`<section class="hero"><div class="crown">♛</div><div class="phase">The kingdom stands</div><h1>${escapeHTML(winner.name)} wins.</h1><p>${SUITS[winner.suit]} ${NAMES[winner.suit]} is the last kingdom standing.</p></section>${canReplayLast()||canReplay(game)?`<section class="panel"><h2>Watch it again</h2><p class="muted small">${canReplay(game)?'Replay every turn with all cards visible. The saved game is not changed.':'Watch the last fights again. Cards return to their hidden live faces afterward.'}</p>${replayLastButton()}${canReplay(game)?`<button class="button wide" data-action="replay-game">Replay game</button>`:''}</section>`:''}${game.mode==='text'?`<section class="panel"><h2>Tell the group</h2>${turnLink?`<div class="actions"><button class="button" data-action="copy-turn">Copy result</button><button class="button secondary" data-action="share-turn">Share to app…</button></div>`:'<p class="muted">Preparing result link…</p>'}</section>`:''}<section class="panel"><h2>Another game?</h2><p class="muted small">Starting another game leaves this one in your Games list.</p><button class="button secondary wide" data-action="new-after-win">New game</button></section>`);
 }
 function renderStalemate() {
   frame(`<section class="hero"><div class="crown">♛</div><h1>No winner yet.</h1><p>This match reached the computer-play safety limit. Its full state is saved in your Games list.</p></section><section class="panel"><button class="button secondary wide" data-action="new-game">Start another game</button></section>`);
@@ -1194,7 +1201,7 @@ app.addEventListener('click', event => {
     const playing=button?.dataset.action;
     if(playing==='games') { clearTimeout(replayTimer);computerPlayback=null;hubOpen=true;render(); return; }
     if(playing==='keep-current'||playing==='restore-backup') { clearTimeout(replayTimer);computerPlayback=null; }
-    else if(game?.mode==='solo'&&computerPlayback.index===computerPlayback.frames.length-1&&computerPlayback.frames.at(-1)?.kind==='result'&&playing!=='replay-next')return;
+    else if(computerPlayback.frames[computerPlayback.index]?.kind==='result'&&playing!=='replay-next')return;
     else { advanceReplay(); return; }
   }
   if (!button) return;
@@ -1439,6 +1446,7 @@ window.addEventListener('keydown', event => {
   if(event.key==='Escape'){event.preventDefault();stopMatchReplay();render();}
 });
 if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(console.error));
+if(!/^#(?:turn|backup)=/.test(location.hash) && gameSlots().length)hubOpen=true;
 render();
 async function openIncomingHash(hash){
   computerPlayback=null;clearTimeout(replayTimer);stopMatchReplay();
