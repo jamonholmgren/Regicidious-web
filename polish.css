@@ -1,4 +1,7 @@
 /* App-like scrolling and compact launch/setup screens. */
+.brand{border:0;background:none;padding:0;text-align:left;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.brand:focus-visible{outline:2px solid #e9be74;outline-offset:5px;border-radius:3px}
+.perf:empty{display:none}
 html{min-height:100%;overflow-x:hidden;overflow-y:auto;overscroll-behavior:none}
 body{min-height:100dvh;overflow-x:hidden;overscroll-behavior:none}
 .app{min-height:100dvh;height:auto;overflow:visible;overscroll-behavior:none}

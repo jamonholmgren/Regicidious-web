@@ -33,7 +33,7 @@ function rememberPlayerEmoji(emoji) {
   try { localStorage.setItem(PLAYER_EMOJI_KEY,emoji); }
   catch { /* Saving a preference must not block a game move. */ }
 }
-let timings = {logic:0,save:0,render:0};
+let timings = {logic:null,save:null,render:null};
 let backupText='',incomingBackup=null,incomingKind=null,incomingSeat=null,backupError='',linkLoading=false;
 let selectedOpponent=null,sheetOpen=false,reserveOpen=false;
 let computerRecording=null,computerPlayback=null,replayTimer=null;
@@ -51,7 +51,9 @@ const SEAT_COOKIE='rgseat_';
 const IDENTITY_PREFIX='regicidious.identity.';
 try { installDismissed=localStorage.getItem('regicidious.install-tip.dismissed')==='1'; } catch { /* Storage warning appears elsewhere. */ }
 try { tutorialOpen=localStorage.getItem('regicidious.tutorial.open')==='1';tutorialStep=Math.min(8,Math.max(0,Number(localStorage.getItem('regicidious.tutorial.step'))||0)); } catch { /* The lesson can restart if preferences are unavailable. */ }
-const micro=n=>`${Math.round(n).toLocaleString()} µs`;
+const milliseconds=n=>`${n.toFixed(2)} ms`;
+const timingLine=()=>timings.render===null?'':`Last move: logic ${milliseconds(timings.logic)} · save ${milliseconds(timings.save)} · render ${milliseconds(timings.render)}`;
+const creditLine='Original game by Shane Holmgren<br>Digital adaptation by Jamon Holmgren, <a href="https://jammin.games/" target="_blank" rel="noopener noreferrer">Jammin Games</a>';
 
 try {
   const legacy=localStorage.getItem(KEY);
@@ -403,10 +405,10 @@ function commit(change) {
   try {
     change();
     if(game.phase==='victory'&&game.scoreVersion===1&&!game.finishedAt)game.finishedAt=Math.floor(Date.now()/1000)*1000;
-    timings.logic=Math.round((performance.now()-started)*1000);
+    timings.logic=performance.now()-started;
     const saving=performance.now();
     localStorage.setItem(SLOT_PREFIX+slotId, encodeForBackup(game));
-    timings.save=Math.round((performance.now()-saving)*1000);
+    timings.save=performance.now()-saving;
   } catch (error) {
     game = previous;
     slotId=previousSlot;
@@ -430,9 +432,9 @@ function commit(change) {
   try {
     const painting=performance.now();
     render();
-    timings.render=Math.round((performance.now()-painting)*1000);
+    timings.render=performance.now()-painting;
     const indicator=app.querySelector('.perf');
-    if(indicator) indicator.textContent=`Last move: logic ${micro(timings.logic)} · save ${micro(timings.save)} · UI ${micro(timings.render)}`;
+    if(indicator) indicator.textContent=timingLine();
   } catch (error) { console.error(error); }
   return true;
 }
@@ -486,8 +488,8 @@ function lineHTML(cards, action, location, hidden=false) { return `<div class="l
 function frame(content,compact=false) {
   const inMatch=!!game&&!hubOpen&&!incomingBackup&&!incomingScores&&!tutorialOpen&&!scoresOpen;
   const topAction=inMatch?matchReplay||computerPlayback?'':`<button class="pill" data-action="toggle-sheet" aria-label="Game details">☰</button>`:hubOpen?'':`<button class="pill" data-action="games">Games</button>`;
-  const credit=`<p class="notice">Game by Shane Holmgren · Digital adaptation by Jamon Holmgren, <a href="https://jammin.games/" target="_blank" rel="noopener noreferrer">Jammin Games</a><br><span class="perf">Last move: logic ${micro(timings.logic)} · save ${micro(timings.save)} · UI ${micro(timings.render)}</span></p>`;
-  app.innerHTML = `<main class="app ${compact?'compact-app':''}"><header class="top ${compact?'compact-top':''}"><div class="brand">♛ Regicidious</div><div class="top-actions">${topAction}</div></header>${storageError?`<div class="status" role="alert">${storageError}</div>`:''}${backupError?`<div class="status" role="alert">${backupError}</div>`:''}${content}${!compact&&!game&&!hubOpen&&!incomingBackup&&!incomingScores&&!scoresOpen&&!tutorialOpen?pastePanel():''}${!compact&&inMatch?arenaDetails():''}${compact?'':credit}</main>`;
+  const credit=`<p class="notice">${creditLine}<br><span class="perf">${timingLine()}</span></p>`;
+  app.innerHTML = `<main class="app ${compact?'compact-app':''}"><header class="top ${compact?'compact-top':''}"><button type="button" class="brand" data-action="reload" aria-label="Reload Regicidious" title="Reload page">♛ Regicidious</button><div class="top-actions">${topAction}</div></header>${storageError?`<div class="status" role="alert">${storageError}</div>`:''}${backupError?`<div class="status" role="alert">${backupError}</div>`:''}${content}${!compact&&!game&&!hubOpen&&!incomingBackup&&!incomingScores&&!scoresOpen&&!tutorialOpen?pastePanel():''}${!compact&&inMatch?arenaDetails():''}${compact?'':credit}</main>`;
 }
 function shortTileName(name,count){
   const chars=Array.from(name.trim()),max=count>2?10:13;
@@ -686,7 +688,7 @@ function arenaDetails() {
   const notice=game.mode==='text'?restoreNoticeText(game,textAccess()):'';
   const backup=`<p class="small muted">Back up this match before removing it if you may want to restore it later.</p><button class="button secondary wide" data-action="backup">Make Backup</button>${backupForSlot===slotId&&backupText?`<textarea readonly rows="3">${escapeHTML(backupText)}</textarea><button class="button secondary" data-action="copy-backup">Copy backup link</button>`:''}`;
   const dates=slotId?readDates(slotId):{started:0,last:0};
-  return `<div class="sheet-scrim" data-action="toggle-sheet"></div><section class="arena-sheet" role="dialog" aria-label="Game details"><div class="row"><h3>Match details</h3><button class="button ghost" data-action="toggle-sheet">Close</button></div><p class="muted small">Round ${game.round} · ${escapeHTML(player(game.turn).name)} · ${escapeHTML(game.phase)}</p><p class="muted small">Started ${escapeHTML(dateText(dates.started||game.startedAt))}<br>Last move ${escapeHTML(dateText(dates.last))}${dates.last?` · ${escapeHTML(relativeText(dates.last))}`:''}</p>${notice?`<p class="status">${escapeHTML(notice)}</p>`:''}<p class="small">${escapeHTML(game.message||'Tap a card to select it. The highest individual die wins.')}</p>${game.log?.length?`<div class="small muted">${game.log.slice(-6).reverse().map(item=>`<p>${escapeHTML(item)}</p>`).join('')}</div>`:''}${share}${backup}<div class="details-actions"><button class="button secondary wide" data-action="games">All games</button><button class="button ${deleteCandidate===slotId?'danger':'ghost'} wide" data-action="delete-game" data-id="${escapeHTML(slotId)}">${deleteCandidate===slotId?'Confirm delete':'Delete from this device'}</button></div><p class="small muted">Game by Shane Holmgren · Digital adaptation by Jamon Holmgren, <a href="https://jammin.games/" target="_blank" rel="noopener noreferrer">Jammin Games</a>.</p><p class="small muted">Last move: logic ${micro(timings.logic)} · save ${micro(timings.save)} · UI ${micro(timings.render)}.</p></section>`;
+  return `<div class="sheet-scrim" data-action="toggle-sheet"></div><section class="arena-sheet" role="dialog" aria-label="Game details"><div class="row"><h3>Match details</h3><button class="button ghost" data-action="toggle-sheet">Close</button></div><p class="muted small">Round ${game.round} · ${escapeHTML(player(game.turn).name)} · ${escapeHTML(game.phase)}</p><p class="muted small">Started ${escapeHTML(dateText(dates.started||game.startedAt))}<br>Last move ${escapeHTML(dateText(dates.last))}${dates.last?` · ${escapeHTML(relativeText(dates.last))}`:''}</p>${notice?`<p class="status">${escapeHTML(notice)}</p>`:''}<p class="small">${escapeHTML(game.message||'Tap a card to select it. The highest individual die wins.')}</p>${game.log?.length?`<div class="small muted">${game.log.slice(-6).reverse().map(item=>`<p>${escapeHTML(item)}</p>`).join('')}</div>`:''}${share}${backup}<div class="details-actions"><button class="button secondary wide" data-action="games">All games</button><button class="button ${deleteCandidate===slotId?'danger':'ghost'} wide" data-action="delete-game" data-id="${escapeHTML(slotId)}">${deleteCandidate===slotId?'Confirm delete':'Delete from this device'}</button></div><p class="small muted">${creditLine}</p>${timings.render===null?'':`<p class="small muted perf">${timingLine()}</p>`}</section>`;
 }
 function arenaReserve(owner, visual) {
   const p=player(owner);
@@ -1429,6 +1431,7 @@ app.addEventListener('change', event => {
 });
 app.addEventListener('click', event => {
   const button=event.target.closest('[data-action]');
+  if(button?.dataset.action==='reload'){location.reload();return;}
   if(matchReplay) {
     const action=button?.dataset.action;
     if(matchReplay.suppressClick){matchReplay.suppressClick=false;if(action==='match-replay-prev'||action==='match-replay-next')return;}
