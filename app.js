@@ -391,6 +391,7 @@ function advanceTurn() {
   game.attacks = 0; game.usedAttacker=null; game.scout=null; game.kills = 0; game.pending = null;
   game.message = player(next).cpu?`${player(next).name} is thinking…`:'';
 }
+function attackLimit(){return game.turn===0&&game.round===1?1:2;}
 function cardHTML(id, action, location, index, opts={}) {
   const selected = game?.selection && game.selection.location === location && game.selection.index === index;
   const attrs = action ? `data-action="${action}" data-location="${location}" data-index="${index}"` : 'disabled';
@@ -452,12 +453,12 @@ function renderTextWaiting() {
 function renderStart() {
   const standalone=window.matchMedia?.('(display-mode: standalone)').matches||navigator.standalone;
   const install=!standalone&&!installDismissed?`<section class="install-tip" aria-label="Install Regicidious"><div><strong>Add to Home Screen</strong><p>On iPhone, open in Safari, tap Share, then Add to Home Screen. For text games, paste a received link into the installed app if Messages opens Safari.</p></div><button class="tip-close" data-action="dismiss-install" aria-label="Dismiss install tip">×</button></section>`:'';
-  frame(`<section class="launch"><div class="launch-crown">♛</div><h1>A battle in your pocket</h1><p>Two attacks. One surviving kingdom.</p><button class="button wide launch-start" data-action="setup-open">Start new game →</button>${gameSlots().length?'<button class="button secondary wide" data-action="games">Continue a saved game</button>':''}</section>${install}<details class="panel compact-rules"><summary>How to play</summary><p>Prepare your line, hire reinforcements, then make up to two attacks. Solo, pass the phone, or exchange turns by text link.</p></details>`);
+  frame(`<section class="launch"><div class="launch-crown">♛</div><h1>A battle in your pocket</h1><p>One opening strike. Two thereafter.</p><button class="button wide launch-start" data-action="setup-open">Start new game →</button>${gameSlots().length?'<button class="button secondary wide" data-action="games">Continue a saved game</button>':''}</section>${install}<details class="panel compact-rules"><summary>How to play</summary><p>Prepare your line, hire reinforcements, then attack once on the opening turn and up to twice thereafter with different cards. Solo, pass the phone, or exchange turns by text link.</p></details>`);
 }
 function renderSetup() {
   const modes=[['solo','Solo vs computer'],['local','Pass the phone'],['text','Text-message multiplayer']];
   const layouts=[['expanded','Expanded · 4 across, 7 cards'],['classic','Classic · 3 across, 6 cards']];
-  const royalRules=`<p class="small muted">Make up to two attacks with different cards each turn. A neighboring peasant lends the Queen a die when she attacks and falls in her place if she loses. When the King defends, a neighboring peasant takes a winning hit for him. The weakest adjacent peasant falls first.</p>`;
+  const royalRules=`<p class="small muted">The first commander gets one opening attack. Later turns allow two attacks with different cards. A neighboring peasant lends the Queen a die when she attacks and falls in her place if she loses. When the King defends, a neighboring peasant takes a winning hit for him. The weakest adjacent peasant falls first.</p>`;
   const difficulty=draft.mode==='solo'?`<div class="label">Enemy commander</div><div class="actions mode-actions">${[['serf','Serf · easy'],['captain','Captain · normal'],['warlord','Warlord · hard']].map(([id,title])=>`<button class="button ${draft.difficulty===id?'':'ghost'}" data-action="difficulty" data-value="${id}">${title}</button>`).join('')}</div><p class="small muted">Serf charges recklessly. Captain weighs the odds. Warlord guards the crown and picks fights carefully.</p>`:'';
   frame(`<div class="setup-heading"><button class="button ghost" data-action="setup-back">‹ Back</button><h1>New game</h1></div><section class="panel setup-panel"><p class="flavor">M’lord, our enemies are at the gates. We must prepare for war!</p><div class="label">Mode</div><div class="actions mode-actions">${modes.map(([mode,title])=>`<button class="button ${draft.mode===mode?'':'ghost'}" data-action="mode" data-value="${mode}">${title}</button>`).join('')}</div><div class="label">Battle lines</div><div class="actions mode-actions">${layouts.map(([layout,title])=>`<button class="button ${draft.layout===layout?'':'ghost'}" data-action="layout" data-value="${layout}">${title}</button>`).join('')}</div>${difficulty}${royalRules}<div class="label">${draft.mode==='solo'?'Computer opponents':'Players'}</div><div class="actions">${[2,3,4].map(n=>`<button class="button ${draft.count===n?'':'ghost'}" data-action="count" data-value="${n}">${draft.mode==='solo'?n-1:n}</button>`).join('')}</div><div class="stack" style="margin-top:18px">${draft.names.slice(0,draft.mode==='solo'?1:draft.count).map((name,i)=>`<label class="field"><span>${SUITS[i]} ${draft.mode==='solo'?'Your name':NAMES[i]}</span><input data-name="${i}" maxlength="24" value="${escapeHTML(name)}" autocomplete="off"></label>`).join('')}</div>${draft.mode==='text'?`<p class="small muted">Name every player now. After setting your own lines, send each person their invite. Links discourage casual peeking but are not cheat-proof.</p>`:''}<button class="button wide begin-game" data-action="start">Begin the war →</button></section>`);
 }
@@ -527,7 +528,7 @@ function renderArena(owner,mode,intro,controls,visual) {
   const own=player(owner);
   const seenReserve=visual?.revealAll&&target?.reserve?.length?`<div class="arena-row"><span class="arena-label">Reserve</span><div class="reserve">${target.reserve.map((id,i)=>cardHTML(id,'','reserve',i,{owner:opponent,row:'reserve'})).join('')}</div></div>`:'';
   const last=visual? '':replayLastButton(true);
-  frame(`<section class="arena" aria-label="Battlefield"><div class="arena-opponent"><div class="arena-hud">${switcher}<span>${target?`${target.front.filter(Boolean).length+target.back.filter(Boolean).length} cards`:''}</span></div>${target?arenaRow(opponent,'back',false,mode,visual):''}${target?arenaRow(opponent,'front',false,mode,visual):''}${seenReserve}</div><div class="arena-middle">${middle}</div><div class="arena-self"><div class="arena-hud"><strong>${escapeHTML(own.name)} ${SUITS[owner]}</strong><span>◉ ${own.coins} · ${game.attacks}/2 attacks</span></div>${arenaRow(owner,'front',true,mode,visual)}${arenaRow(owner,'back',true,mode,visual)}${arenaReserve(owner,visual)}</div><div class="arena-dock ${visual?'replay-dock':''}${last?' with-last':''}">${controls}${last}</div></section>${arenaDetails()}`,true);
+  frame(`<section class="arena" aria-label="Battlefield"><div class="arena-opponent"><div class="arena-hud">${switcher}<span>${target?`${target.front.filter(Boolean).length+target.back.filter(Boolean).length} cards`:''}</span></div>${target?arenaRow(opponent,'back',false,mode,visual):''}${target?arenaRow(opponent,'front',false,mode,visual):''}${seenReserve}</div><div class="arena-middle">${middle}</div><div class="arena-self"><div class="arena-hud"><strong>${escapeHTML(own.name)} ${SUITS[owner]}</strong><span>◉ ${own.coins} · ${game.attacks}/${attackLimit()} attacks</span></div>${arenaRow(owner,'front',true,mode,visual)}${arenaRow(owner,'back',true,mode,visual)}${arenaReserve(owner,visual)}</div><div class="arena-dock ${visual?'replay-dock':''}${last?' with-last':''}">${controls}${last}</div></section>${arenaDetails()}`,true);
 }
 function renderPlay() {
   const p = player(game.turn);
@@ -538,7 +539,7 @@ function renderPlay() {
     intro = buyPrompt?'Hark! Tap the gilded hollow again to hire a random card for 2 coins.':`Prepare!! Good sire, array thy vanguard ere the horns sound.${p.coins>=2&&p.deck.length?' Tap an empty hollow twice to hire a random card for 2 coins.':''}`;
     controls = `${canBolster?`<button class="button secondary" data-action="bolster">Bolster your lines</button>`:''}<button class="button wide" data-action="next">To arms!</button>`;
   } else if (game.phase === 'attack') {
-    intro = `Attack!! Sally ${game.attacks+1}/2: tap thy front champion or rear Knight, then a foe.${game.attacks?' A different champion must lead this charge.':''}`;
+    intro = `Attack!! Sally ${game.attacks+1}/${attackLimit()}: tap thy front champion or rear Knight, then a foe.${game.attacks?' A different champion must lead this charge.':''}`;
     controls = `<button class="button secondary wide" data-action="finish-attacks">${retreatArmed===retreatKey()?'Confirm end attacks':game.attacks?'Sound the retreat':'Hold the line'} →</button>`;
   } else {
     const jack = hasCard(p,'J') ? 1 : 0;
@@ -1049,7 +1050,7 @@ function resolveBattle() {
   }
   if (!player(game.turn).alive) { advanceTurn(); return; }
   game.phase='attack'; game.view=player(game.turn).cpu?null:game.turn; game.message='';
-  if (game.attacks>=2 || !player(game.turn).front.some(id=>id&&id!==game.usedAttacker) && !player(game.turn).back.some(id=>id&&id!==game.usedAttacker&&rank(id)==='10')) finishAttacks();
+  if (game.attacks>=attackLimit() || !player(game.turn).front.some(id=>id&&id!==game.usedAttacker) && !player(game.turn).back.some(id=>id&&id!==game.usedAttacker&&rank(id)==='10')) finishAttacks();
 }
 
 function cardPriority(id) {
@@ -1169,7 +1170,7 @@ function runAI(maxSteps=2000) {
       record({t:'phase',phase:'arrange'});
     } else if(game.phase==='arrange') { arrangeAI(p); record({t:'arrangeSet',owner:game.turn,front:[...p.front],back:[...p.back],reserve:[...p.reserve]}); game.phase='attack'; }
     else if(game.phase==='attack') {
-      const choice=game.attacks<2 && chooseAIAttack();
+      const choice=game.attacks<attackLimit() && chooseAIAttack();
       if(!choice) { finishAttacks(); continue; }
       game.selection={location:choice.sourceRow,index:choice.sourceIndex};
       const target={owner:choice.enemy,row:choice.row,index:choice.index};
@@ -1193,7 +1194,7 @@ function runAI(maxSteps=2000) {
 }
 function attack(targetPlayer,row,index) {
   const source=game.selection;
-  if(game.phase!=='attack'||!player(game.turn).alive||game.attacks>=2)return;
+  if(game.phase!=='attack'||!player(game.turn).alive||game.attacks>=attackLimit())return;
   if (!source || !['front','back'].includes(source.location) || !player(game.turn)[source.location][source.index]) return;
   if (targetPlayer===game.turn || !player(targetPlayer)?.alive || !player(targetPlayer)[row]?.[index]) return;
   const attackCard=player(game.turn)[source.location][source.index], defendCard=player(targetPlayer)[row][index];
