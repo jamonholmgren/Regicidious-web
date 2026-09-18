@@ -5,6 +5,7 @@ const META_PREFIX = 'regicidious.meta.';
 const ACCESS_PREFIX = 'regicidious.access.';
 const DELETED_PREFIX = 'regicidious.deleted.';
 const ACTIVE_KEY = 'regicidious.active';
+const PLAYER_NAME_KEY = 'regicidious.player-name';
 const MIGRATED_KEY = 'regicidious.legacy-imported';
 const SUITS = ['♠', '♥', '♣', '♦'];
 const NAMES = ['Spades', 'Hearts', 'Clubs', 'Diamonds'];
@@ -14,6 +15,14 @@ let game = null;
 let slotId=null,hubOpen=false;
 let storageError = '';
 let draft = { mode:'solo',count:2, layout:'expanded', queenRule:'original', names: ['You','Crimson Court','Iron Court','Ember Court'] };
+try {
+  const rememberedName=localStorage.getItem(PLAYER_NAME_KEY);
+  if(rememberedName!=null&&rememberedName.trim())draft.names[0]=rememberedName.slice(0,24);
+} catch { /* The game remains usable if preferences cannot be read. */ }
+function rememberPlayerName(name) {
+  try { localStorage.setItem(PLAYER_NAME_KEY,String(name).slice(0,24)); }
+  catch { /* Saving a preference must not block a game move. */ }
+}
 let timings = {logic:0,save:0,render:0};
 let backupText='',incomingBackup=null,incomingKind=null,incomingSeat=null,backupError='',linkLoading=false;
 let selectedOpponent=null,sheetOpen=false,reserveOpen=false;
@@ -24,6 +33,7 @@ let turnLink='',turnLinkSource='',turnLinkBusy=false,turnLinkError='';
 let pasteOpen=false;
 let inviteLinks={};
 let setupOpen=false,installDismissed=false,deleteTimer=null,buyPrompt=null,buyPromptTimer=null,completedOpen=false;
+let retreatArmed=null,retreatTimer=null;
 const expandedGameDates=new Set();
 const SEAT_COOKIE='rgseat_';
 try { installDismissed=localStorage.getItem('regicidious.install-tip.dismissed')==='1'; } catch { /* Storage warning appears elsewhere. */ }
@@ -512,7 +522,7 @@ function renderPlay() {
     controls = `${canBolster?`<button class="button secondary" data-action="bolster">Bolster your lines</button>`:''}<button class="button wide" data-action="next">To arms!</button>`;
   } else if (game.phase === 'attack') {
     intro = `Attack!! Sally ${game.attacks+1}/2: tap thy front champion or rear Knight, then a foe.`;
-    controls = `<button class="button secondary wide" data-action="finish-attacks">${game.attacks ? 'Sound the retreat' : 'Hold the line'} →</button>`;
+    controls = `<button class="button secondary wide" data-action="finish-attacks">${retreatArmed===retreatKey()?'Confirm end attacks':game.attacks?'Sound the retreat':'Hold the line'} →</button>`;
   } else {
     const jack = hasCard(p,'J') ? 1 : 0;
     intro = `${game.kills} defeated ${game.kills===1?'card':'cards'} + ${jack} Jack bonus = ${game.kills+jack} ${game.kills+jack===1?'coin':'coins'}.`;
@@ -520,6 +530,8 @@ function renderPlay() {
   }
   renderArena(game.turn,game.phase,intro,controls);
 }
+function retreatKey(){return `${slotId}:${game?.round}:${game?.turn}:${game?.attacks}`;}
+function clearRetreat(){retreatArmed=null;clearTimeout(retreatTimer);}
 function renderRefill() {
   const index = game.refill[game.refillIndex], p = player(index);
   const gaps = p.front.filter(id => !id).length;
@@ -1148,7 +1160,11 @@ function attack(targetPlayer,row,index) {
 }
 
 app.addEventListener('input', event => {
-  if (event.target.matches('[data-name]')) draft.names[Number(event.target.dataset.name)] = event.target.value;
+  if (event.target.matches('[data-name]')) {
+    const index=Number(event.target.dataset.name);
+    draft.names[index]=event.target.value;
+    if(index===0)rememberPlayerName(event.target.value);
+  }
 });
 app.addEventListener('click', event => {
   const button=event.target.closest('[data-action]');
@@ -1330,7 +1346,7 @@ app.addEventListener('click', event => {
   if (action==='mode') { draft.mode=button.dataset.value; render(); return; }
   if (action==='layout') { draft.layout=button.dataset.value==='classic'?'classic':'expanded'; render(); return; }
   if (action==='queen-rule') { draft.queenRule=button.dataset.value==='cedric'?'cedric':'original'; render(); return; }
-  if (action==='start') { clearLinkError(); return commit(newGame); }
+  if (action==='start') { rememberPlayerName(draft.names[0]);clearLinkError(); return commit(newGame); }
   if (action==='bolster' && game && ['setup','buy','arrange'].includes(game.phase)) {
     const owner=game.phase==='setup'?game.setup:game.turn;
     return commit(()=>bolsterLines(owner));
@@ -1371,14 +1387,23 @@ app.addEventListener('click', event => {
       game.selection=null; game.message=''; record({t:'phase',phase:game.phase}); return;
     }
     if (action==='attacker' && game.phase==='attack') {
+      clearRetreat();
       const row=button.dataset.location,id=player(game.turn)[row]?.[index];
       if (id && (row==='front' || row==='back' && rank(id)==='10')) game.selection=game.selection?.location===row&&game.selection.index===index?null:{location:row,index};
       return;
     }
-    if (action==='target' && game.phase==='attack') { const [owner,row]=button.dataset.location.split(':'); attack(Number(owner),row,index); return; }
+    if (action==='target' && game.phase==='attack') { clearRetreat();const [owner,row]=button.dataset.location.split(':'); attack(Number(owner),row,index); return; }
     if (action==='battle-next' && game.phase==='battle') { resolveBattle(); return; }
     if (action==='sacrifice' && game.phase==='queen') { resolveBattle(); if(player(game.turn).cpu) runAIWithReplay(); return; }
-    if (action==='finish-attacks' && game.phase==='attack') { finishAttacks(); return; }
+    if (action==='finish-attacks' && game.phase==='attack') {
+      const key=retreatKey();
+      if(retreatArmed!==key){
+        retreatArmed=key;clearTimeout(retreatTimer);
+        retreatTimer=setTimeout(()=>{if(retreatArmed===key){retreatArmed=null;if(game?.phase==='attack')render();}},5000);
+        render();return;
+      }
+      clearRetreat();finishAttacks();return;
+    }
     if (action==='refill-done' && game.phase==='refill') { const p=player(game.refill[game.refillIndex]); if (!p.front.includes(null) || !p.back.some(Boolean)) { completeRefill(); if(player(game.turn).cpu) runAIWithReplay(); } return; }
     if (action==='income' && game.phase==='income') { player(game.turn).coins+=game.kills+(hasCard(player(game.turn),'J')?1:0); record({t:'income'}); advanceTurn(); runAIWithReplay(); }
   });
