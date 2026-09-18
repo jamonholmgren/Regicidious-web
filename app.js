@@ -437,7 +437,7 @@ function renderImport() {
   const body=victory?'Open to watch the final clash and the result. Your other saved games stay on this device.':turn?'Open to replay the last fights and continue if this seat is yours. Your other saved games stay on this device.':'Restoring adds another saved game. Your current games remain untouched.';
   const go=victory?'View final clash':turn?'Open turn & replay':'Add backup';
   const progress=g.phase==='setup'?`Battle lines · ${g.setup+1} of ${g.players.length}`:`Round ${g.round} · turn #${g.turnNumber}`;
-  frame(`<section class="panel dispatch"><div class="phase">${title}</div><h2>${headline}</h2><p class="muted">${progress}</p>${playerChips(g)}<p class="muted small">Started ${escapeHTML(started)}</p><p class="small">${body}</p><div class="actions"><button class="button" data-action="restore-backup">${go}</button><button class="button secondary" data-action="keep-current">Not now</button></div></section>`);
+  frame(`<section class="panel dispatch"><div class="phase">${title}</div><h2>${headline}</h2><p class="muted">${progress}</p>${playerChips(g)}<p class="muted small">Started ${escapeHTML(started)}</p><p class="small">${body}</p><div class="actions"><button class="button" data-action="restore-backup">${go}</button></div></section>`);
 }
 function renderTextWaiting() {
   ensureTurnLink();
@@ -529,7 +529,8 @@ function renderArena(owner,mode,intro,controls,visual) {
   const own=player(owner);
   const seenReserve=visual?.revealAll&&target?.reserve?.length?`<div class="arena-row"><span class="arena-label">Reserve</span><div class="reserve">${target.reserve.map((id,i)=>cardHTML(id,'','reserve',i,{owner:opponent,row:'reserve'})).join('')}</div></div>`:'';
   const last=visual? '':replayLastButton(true);
-  frame(`<section class="arena" aria-label="Battlefield"><div class="arena-opponent"><div class="arena-hud">${switcher}<span>${target?`${target.front.filter(Boolean).length+target.back.filter(Boolean).length} cards`:''}</span></div>${target?arenaRow(opponent,'back',false,mode,visual):''}${target?arenaRow(opponent,'front',false,mode,visual):''}${seenReserve}</div><div class="arena-middle">${middle}</div><div class="arena-self"><div class="arena-hud"><strong>${escapeHTML(own.name)} ${SUITS[owner]}</strong><span>◉ ${own.coins} · ${game.attacks}/${attackLimit()} attacks</span></div>${arenaRow(owner,'front',true,mode,visual)}${arenaRow(owner,'back',true,mode,visual)}${arenaReserve(owner,visual)}</div><div class="arena-dock ${visual?'replay-dock':''}${last?' with-last':''}">${controls}${last}</div></section>${arenaDetails()}`,true);
+  const attackStatus=['attack','battle','replay'].includes(mode)?` · ${game.attacks}/${attackLimit()} attacks`:'';
+  frame(`<section class="arena" aria-label="Battlefield"><div class="arena-opponent"><div class="arena-hud">${switcher}<span>${target?`${target.front.filter(Boolean).length+target.back.filter(Boolean).length} cards`:''}</span></div>${target?arenaRow(opponent,'back',false,mode,visual):''}${target?arenaRow(opponent,'front',false,mode,visual):''}${seenReserve}</div><div class="arena-middle">${middle}</div><div class="arena-self"><div class="arena-hud"><strong>${escapeHTML(own.name)} ${SUITS[owner]}</strong><span>◉ ${own.coins}${attackStatus}</span></div>${arenaRow(owner,'front',true,mode,visual)}${arenaRow(owner,'back',true,mode,visual)}${arenaReserve(owner,visual)}</div><div class="arena-dock ${visual?'replay-dock':''}${last?' with-last':''}">${controls}${last}</div></section>${arenaDetails()}`,true);
 }
 function renderPlay() {
   const p = player(game.turn);
@@ -1249,7 +1250,7 @@ app.addEventListener('click', event => {
   if(computerPlayback) {
     const playing=button?.dataset.action;
     if(playing==='games') { clearTimeout(replayTimer);computerPlayback=null;hubOpen=true;render(); return; }
-    if(playing==='keep-current'||playing==='restore-backup') { clearTimeout(replayTimer);computerPlayback=null; }
+    if(playing==='restore-backup') { clearTimeout(replayTimer);computerPlayback=null; }
     else if(computerPlayback.frames[computerPlayback.index]?.kind==='result'&&playing!=='replay-next')return;
     else { advanceReplay(); return; }
   }
@@ -1336,7 +1337,7 @@ app.addEventListener('click', event => {
     if(candidates.length>1){const current=Math.max(0,candidates.indexOf(selectedOpponent));selectedOpponent=candidates[(current+Number(button.dataset.step)+candidates.length)%candidates.length];render();}
     return;
   }
-  if(action==='games') { stopMatchReplay();hubOpen=true;completedOpen=false;sheetOpen=false;reserveOpen=false;backupText='';render();return; }
+  if(action==='games') { stopMatchReplay();incomingRequest++;lastIncomingLocationHash='';incomingBackup=null;incomingKind=null;incomingSeat=null;linkLoading=false;backupError='';history.replaceState(null,'',location.pathname+location.search);hubOpen=true;completedOpen=false;sheetOpen=false;reserveOpen=false;backupText='';render();return; }
   if(action==='completed-games') { stopMatchReplay();hubOpen=true;completedOpen=true;sheetOpen=false;reserveOpen=false;backupText='';render();return; }
   if(action==='new-game' || action==='new-after-win') { stopMatchReplay();clearLinkError();game=null;slotId=null;hubOpen=false;completedOpen=false;setupOpen=true;sheetOpen=false;reserveOpen=false;backupText='';render();return; }
   if(action==='replay-game') {
@@ -1355,7 +1356,6 @@ app.addEventListener('click', event => {
     catch(error) { storageError='This game could not be opened. Its saved data was not changed.';render();console.error(error); }
     return;
   }
-  if(action==='keep-current') { incomingBackup=null;incomingKind=null;incomingSeat=null;hubOpen=!game;history.replaceState(null,'',location.pathname+location.search);render();return; }
   if(action==='restore-backup' && incomingBackup) {
     const restored=incomingBackup,kind=incomingKind,seat=incomingSeat;
     const existing=restored.mode==='text'?gameSlots().find(s=>s.game.matchId===restored.matchId):null;
@@ -1499,13 +1499,17 @@ window.addEventListener('keydown', event => {
 if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(console.error));
 if(!/^#(?:turn|backup)=/.test(location.hash) && gameSlots().length)hubOpen=true;
 render();
+let incomingRequest=0;
+let lastIncomingLocationHash='';
 async function openIncomingHash(hash){
+  const request=++incomingRequest;
   computerPlayback=null;clearTimeout(replayTimer);stopMatchReplay();
   linkLoading=true;backupError='';incomingBackup=null;incomingKind=null;incomingSeat=null;render();
   try {
     const kind=hash.startsWith('#turn=')?'turn':'backup';
     const token=hash.slice(kind==='turn'?6:8);
     let decoded=token.startsWith('E1.')?await LinkCodec.open(token):token;
+    if(request!==incomingRequest)return;
     if(kind==='backup'&&decoded.startsWith('P1:')){
       const match=/^P1:([0-3]):(B1\..+)$/.exec(decoded);
       if(!match)throw Error('Invalid seat backup');
@@ -1515,7 +1519,17 @@ async function openIncomingHash(hash){
     if(kind==='turn'&&saved.mode!=='text')throw Error('Not a text match');
     if(incomingSeat!=null&&(saved.mode!=='text'||incomingSeat>=saved.players.length))throw Error('Invalid seat backup');
     incomingBackup=saved;incomingKind=kind;
-  } catch(error) { backupError='This game link is damaged, stale, or cannot be opened.';console.error(error); }
+  } catch(error) { if(request!==incomingRequest)return;backupError='This game link is damaged, stale, or cannot be opened.';console.error(error); }
+  if(request!==incomingRequest)return;
   linkLoading=false;render();
 }
-if(linkLoading)openIncomingHash(location.hash);
+function readIncomingLocation(){
+  const hash=location.hash;
+  if(!/^#(?:turn|backup)=/.test(hash)){lastIncomingLocationHash='';return;}
+  if(hash===lastIncomingLocationHash&&(linkLoading||incomingBackup||backupError))return;
+  lastIncomingLocationHash=hash;
+  openIncomingHash(hash);
+}
+window.addEventListener('hashchange',readIncomingLocation);
+window.addEventListener('pageshow',readIncomingLocation);
+if(linkLoading)readIncomingLocation();
