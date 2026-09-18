@@ -35,6 +35,9 @@ const StateCodec = (() => {
     }
     string(state.message);
     number((state.log||[]).length);for(const entry of state.log||[])string(entry);
+    const undo=state.refillUndo||[];
+    byte(undo.length);
+    for(const move of undo){byte(move.owner);byte(move.from);byte(move.to);card(move.card);}
     // Detect accidental truncation/corruption. This is not a security signature.
     let check=2166136261;
     for(const n of out)check=Math.imul(check^n,16777619)>>>0;
@@ -84,10 +87,15 @@ const StateCodec = (() => {
     const message=string(),logCount=number();
     if(logCount>1000)throw Error('Invalid log');
     const log=Array.from({length:logCount},string);
+    const refillUndo=[];
+    if(at<data.length-4){
+      const undoCount=byte();if(undoCount>3)throw Error('Invalid refill history');
+      for(let i=0;i<undoCount;i++)refillUndo.push({owner:byte(),from:byte(),to:byte(),card:card()});
+    }
     if(at!==data.length-4)throw Error('Unexpected match data');
     return {version:1,mode,players,turn,round,phase,setup,view:viewCode===255?null:viewCode,
       selection:selectionCode===255?null:{location:['front','back','reserve'][selectionCode],index:selectionIndex},
-      attacks,kills,pending,refill,refillIndex,message,log};
+      attacks,kills,pending,refill,refillIndex,refillUndo,message,log};
   }
   return {encode,decode};
 })();

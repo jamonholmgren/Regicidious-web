@@ -42,4 +42,16 @@
 .arena-sheet{position:fixed;z-index:10;left:0;right:0;bottom:0;max-height:72dvh;overflow:auto;background:#1c3b32;border-radius:20px 20px 0 0;border-top:1px solid #809d8d;padding:18px 18px calc(18px + env(safe-area-inset-bottom));box-shadow:0 -14px 50px #071a15}
 .arena-sheet h3{font:normal 1.4rem Georgia,serif;margin:0}
 .arena-sheet textarea{width:100%;background:#102a23;color:white;border:1px solid #688276;border-radius:8px;padding:8px;margin-top:8px;overflow-wrap:anywhere}
+.replay-dock{flex-direction:column;min-height:76px;gap:3px}
+.replay-dock .button{min-height:34px;flex:0 0 auto}
+.replay-narration{text-align:center;color:#f5dfb1;font-size:.75rem;line-height:1.15;min-height:28px;display:grid;place-items:center}
+.arena-row .card.replay-dim{opacity:.28;filter:saturate(.3)}
+.arena-row .card.replay-active{outline:2px solid #f0c478;outline-offset:1px}
+.arena-row .card.replay-flip{animation:replay-flip .35s ease-out}
+.arena-row .card.replay-loser{animation:replay-fall .65s ease-in forwards}
+.arena-row .card.replay-winner{animation:replay-win .65s ease-out}
+@keyframes replay-flip{from{transform:rotateY(-75deg);filter:brightness(.4)}to{transform:rotateY(0);filter:brightness(1)}}
+@keyframes replay-fall{from{opacity:1;transform:scale(1)}to{opacity:.13;transform:scale(.82)}}
+@keyframes replay-win{0%,100%{transform:scale(1)}45%{transform:scale(1.11)}}
+@media(prefers-reduced-motion:reduce){.arena-row .card.replay-flip,.arena-row .card.replay-loser,.arena-row .card.replay-winner{animation:none}.arena-row .card.replay-loser{opacity:.2}}
 @media(max-height:600px){.compact-app{overflow-y:auto}.arena{min-height:525px}.arena-row .card{height:48px}.arena-middle{height:48px}}

@@ -1,6 +1,7 @@
 /* Regicidious — local-only, framework-free pass-and-play. */
 const KEY = 'regicidious.game.v1';
 const SLOT_PREFIX = 'regicidious.match.';
+const META_PREFIX = 'regicidious.meta.';
 const ACTIVE_KEY = 'regicidious.active';
 const MIGRATED_KEY = 'regicidious.legacy-imported';
 const SUITS = ['♠', '♥', '♣', '♦'];
@@ -14,6 +15,7 @@ let draft = { mode:'solo',count:2, names: ['You','Crimson Court','Iron Court','E
 let timings = {logic:0,save:0,render:0};
 let backupText='',incomingBackup=null,backupError='';
 let selectedOpponent=null,sheetOpen=false,reserveOpen=false;
+let computerRecording=null,computerPlayback=null,replayTimer=null;
 
 try {
   const legacy=localStorage.getItem(KEY);
@@ -48,7 +50,9 @@ function validateState(saved) {
   if(!validIndex(saved.turn,count)||!validIndex(saved.setup,count)||!Number.isInteger(saved.round)||saved.round<1||saved.round>1000000)bad();
   if(!['setup','buy','arrange','attack','battle','queen','refill','income','victory','stalemate'].includes(saved.phase)||saved.view!=null&&!validIndex(saved.view,count))bad();
   if(!Number.isInteger(saved.attacks)||saved.attacks>2||saved.attacks<0||!Number.isInteger(saved.kills)||saved.kills<0||saved.kills>2)bad();
+  saved.refillUndo??=[];
   if(!Array.isArray(saved.refill)||saved.refill.length>count||new Set(saved.refill).size!==saved.refill.length||saved.refill.some(i=>!validIndex(i,count)))bad();
+  if(!Array.isArray(saved.refillUndo)||saved.refillUndo.length>3||saved.refillUndo.some(m=>!validIndex(m.owner,count)||!validIndex(m.from,3)||!validIndex(m.to,3)||!validCard(m.card,m.owner)))bad();
   if(!Number.isInteger(saved.refillIndex)||saved.refillIndex<0||saved.refillIndex>saved.refill.length||saved.phase==='refill'&&saved.refillIndex>=saved.refill.length)bad();
   if(typeof saved.message!=='string'||saved.message.length>2048||!Array.isArray(saved.log)||saved.log.length>1000||saved.log.some(s=>typeof s!=='string'||s.length>2048))bad();
   saved.players.forEach((p,i)=>{
@@ -81,12 +85,27 @@ function readSlot(id) {
   for(const p of saved.players)p.cpu??=false;
   return validateState(saved);
 }
+function readDates(id) {
+  const raw=localStorage.getItem(META_PREFIX+id);
+  if(!raw)return {started:0,last:0};
+  const [started,last]=raw.split(';').map(Number);
+  return {started:Number.isSafeInteger(started)&&started>0?started:0,last:Number.isSafeInteger(last)&&last>0?last:0};
+}
+function dateText(time) {
+  return time?new Intl.DateTimeFormat(undefined,{dateStyle:'medium',timeStyle:'short'}).format(time):'not recorded';
+}
+function relativeText(time) {
+  if(!time)return '';
+  const elapsed=Math.max(0,Date.now()-time);
+  const parts=elapsed<60000?[Math.floor(elapsed/1000),'second']:elapsed<3600000?[Math.floor(elapsed/60000),'minute']:elapsed<86400000?[Math.floor(elapsed/3600000),'hour']:[Math.floor(elapsed/86400000),'day'];
+  return new Intl.RelativeTimeFormat(undefined,{numeric:'auto'}).format(-parts[0],parts[1]);
+}
 function gameSlots() {
   const slots=[];
   for(let i=0;i<localStorage.length;i++) {
     const key=localStorage.key(i);
     if(!key?.startsWith(SLOT_PREFIX))continue;
-    try { const g=readSlot(key.slice(SLOT_PREFIX.length));if(g)slots.push({id:key.slice(SLOT_PREFIX.length),game:g}); }
+    try { const id=key.slice(SLOT_PREFIX.length),g=readSlot(id);if(g)slots.push({id,game:g,dates:readDates(id)}); }
     catch { /* Preserve a damaged save; never silently delete it. */ }
   }
   return slots.sort((a,b)=>a.id===slotId?-1:b.id===slotId?1:0);
@@ -112,6 +131,10 @@ function commit(change) {
     const saving=performance.now();
     localStorage.setItem(SLOT_PREFIX+slotId, StateCodec.encode(game));
     localStorage.setItem(ACTIVE_KEY,slotId);
+    try {
+      const now=Date.now(),dates=previousSlot===slotId?readDates(slotId):{started:now,last:now};
+      localStorage.setItem(META_PREFIX+slotId,`${dates.started};${now}`);
+    } catch { /* Match data remains saved even if date metadata cannot be written. */ }
     timings.save=Math.round((performance.now()-saving)*1000);
     storageError = '';
     const painting=performance.now();
@@ -123,6 +146,7 @@ function commit(change) {
   } catch (error) {
     game = previous;
     slotId=previousSlot;
+    computerRecording=null;computerPlayback=null;clearTimeout(replayTimer);
     storageError = 'Could not save this move. Free device storage and allow Safari website storage before continuing.';
     render();
     console.error(error);
@@ -140,7 +164,7 @@ function newGame() {
     if (p.cpu) arrangeAI(p);
     return p;
   });
-  game = {version:1,mode:draft.mode,players,turn:0,round:1,phase:'setup',setup:0,view:null,selection:null,attacks:0,kills:0,pending:null,refill:[],refillIndex:0,message:'',log:[]};
+  game = {version:1,mode:draft.mode,players,turn:0,round:1,phase:'setup',setup:0,view:null,selection:null,attacks:0,kills:0,pending:null,refill:[],refillIndex:0,refillUndo:[],message:'',log:[]};
   navigator.storage?.persist?.().catch(() => {});
 }
 function advanceTurn() {
@@ -150,15 +174,15 @@ function advanceTurn() {
   if (next <= game.turn) game.round++;
   game.turn = next; game.phase = 'buy'; game.view = null; game.selection = null;
   game.attacks = 0; game.kills = 0; game.pending = null;
-  game.message = game.mode==='solo'?'Your turn. Buy cards or arrange your line.':`${player(next).name}'s turn. Pass the phone to them.`;
+  game.message = player(next).cpu?`${player(next).name} is thinking…`:game.mode==='solo'?'Your turn. Buy cards or arrange your line.':`${player(next).name}'s turn. Pass the phone to them.`;
 }
 function cardHTML(id, action, location, index, opts={}) {
   const selected = game?.selection && game.selection.location === location && game.selection.index === index;
   const attrs = action ? `data-action="${action}" data-location="${location}" data-index="${index}"` : 'disabled';
   const place=opts.owner!=null?`${player(opts.owner).name}, ${opts.row} slot ${index+1}, `:'';
-  if (!id) return `<button class="card empty" ${attrs} aria-label="${escapeHTML(place)}empty slot">+</button>`;
-  if (opts.hidden) return `<button class="card back ${opts.target?'target':''}" ${attrs} aria-label="${escapeHTML(place)}face-down card"><span class="center">♛</span></button>`;
-  return `<button class="card ${['♥','♦'].includes(suit(id))?'red':''} ${selected?'selected':''}" ${attrs} aria-label="${escapeHTML(place)}${label(id)}"><span class="rank">${rank(id)}<small>${suit(id)}</small></span><span class="center">${suit(id)}</span><span class="rank foot">${rank(id)}<small>${suit(id)}</small></span></button>`;
+  if (!id) return `<button class="card empty ${opts.className||''}" ${attrs} aria-label="${escapeHTML(place)}empty slot">+</button>`;
+  if (opts.hidden) return `<button class="card back ${opts.target?'target':''} ${opts.className||''}" ${attrs} aria-label="${escapeHTML(place)}face-down card"><span class="center">♛</span></button>`;
+  return `<button class="card ${['♥','♦'].includes(suit(id))?'red':''} ${selected?'selected':''} ${opts.className||''}" ${attrs} aria-label="${escapeHTML(place)}${label(id)}"><span class="rank">${rank(id)}<small>${suit(id)}</small></span><span class="center">${suit(id)}</span><span class="rank foot">${rank(id)}<small>${suit(id)}</small></span></button>`;
 }
 function lineHTML(cards, action, location, hidden=false) { return `<div class="line">${cards.map((id,i) => cardHTML(id,action,location,i,{hidden})).join('')}</div>`; }
 function frame(content,compact=false) {
@@ -166,7 +190,7 @@ function frame(content,compact=false) {
 }
 function renderHub() {
   const slots=gameSlots();
-  frame(`<section class="hero"><div class="crown">♛</div><h1>Your games</h1><p>Every match stays here until Safari website data is removed.</p></section>${slots.map(({id,game:g})=>`<section class="panel"><div class="phase">${g.mode==='solo'?'Solo':'Pass & play'} · Round ${g.round}</div><h2>${escapeHTML(g.players[0].name)}${g.mode==='solo'?' vs computer':''}</h2><p class="muted small">${g.phase==='victory'?'Finished':`Current turn: ${escapeHTML(g.players[g.turn].name)}`} · ${g.players.length} kingdoms</p><button class="button wide" data-action="open-game" data-id="${id}">${g.phase==='victory'?'View game':'Continue →'}</button></section>`).join('')}<div class="actions"><button class="button secondary wide" data-action="new-game">Start another game</button></div>`);
+  frame(`<section class="hero"><div class="crown">♛</div><h1>Your games</h1><p>Every match stays here until Safari website data is removed.</p></section>${slots.map(({id,game:g,dates})=>`<section class="panel"><div class="phase">${g.mode==='solo'?'Solo':'Pass & play'} · Round ${g.round}</div><h2>${escapeHTML(g.players[0].name)}${g.mode==='solo'?' vs computer':''}</h2><p class="muted small">${g.phase==='victory'?'Finished':`Current turn: ${escapeHTML(g.players[g.turn].name)}`} · ${g.players.length} kingdoms</p><p class="muted small">Started ${dateText(dates.started)}<br>Last move ${dateText(dates.last)}${dates.last?` · ${relativeText(dates.last)}`:''}</p><button class="button wide" data-action="open-game" data-id="${id}">${g.phase==='victory'?'View game':'Continue →'}</button></section>`).join('')}<div class="actions"><button class="button secondary wide" data-action="new-game">Start another game</button></div>`);
 }
 function renderImport() {
   const p=incomingBackup.players[incomingBackup.turn];
@@ -177,7 +201,7 @@ function renderStart() {
 }
 function renderVeil() {
   const index = game.phase === 'setup' ? game.setup : game.phase === 'refill' ? game.refill[game.refillIndex] : game.phase === 'queen' ? game.pending.defender : game.turn;
-  const text = game.phase === 'setup' ? 'Arrange your starting cards in private.' : game.phase === 'refill' ? 'Fill any front-line gaps in private.' : game.phase === 'queen' ? 'Your Queen may sacrifice an adjacent peasant.' : 'Your kingdom is waiting.';
+  const text = game.phase === 'setup' ? 'Arrange your starting cards in private.' : game.phase === 'refill' ? 'Fill any front-line gaps in private.' : game.phase === 'queen' ? 'Your Queen sacrifices the weakest adjacent peasant.' : 'Your kingdom is waiting.';
   const solo=game.mode==='solo';
   frame(`<section class="veil"><div><div class="crown">${SUITS[index]}</div><div class="phase">${solo?'Your kingdom':'Pass the phone'}</div><h1>${escapeHTML(player(index).name)}</h1><p>${text}${solo?'':'<br>Make sure only this player can see the screen.'}</p><div class="actions"><button class="button wide" data-action="reveal">${solo?'Continue →':`I’m ${escapeHTML(player(index).name)} — reveal`}</button></div></div></section>`);
 }
@@ -189,15 +213,22 @@ function renderBoard(index, mode) {
 function renderOpponents() {
   return game.players.map((p,i) => i === game.turn || !p.alive ? '' : `<section class="opponent"><div class="board-title"><h3>${escapeHTML(p.name)} ${SUITS[i]}</h3><span class="pill">${p.front.filter(Boolean).length+p.back.filter(Boolean).length} in play</span></div><div class="label">Back line</div>${lineHTML(p.back,'target',`${i}:back`,true)}<div class="label">Front line</div>${lineHTML(p.front,'target',`${i}:front`,true)}</section>`).join('');
 }
-function arenaRow(owner,row,own,mode) {
+function arenaRow(owner,row,own,mode,visual) {
   const p=player(owner);
   const cards=p[row].map((id,index)=>{
     let action='';
     if(own && ['setup','arrange','refill'].includes(mode))action='slot';
     if(own && mode==='attack' && id && (row==='front'||rank(id)==='10'))action='attacker';
     if(!own && mode==='attack' && id)action='target';
-    const reveal=!own && mode==='battle' && game.pending?.defender===owner && game.pending.target.row===row && game.pending.target.index===index;
-    return cardHTML(id,action,own?row:`${owner}:${row}`,index,{hidden:!own&&!reveal,owner,row,target:reveal});
+    const source=visual?.source?.owner===owner&&visual.source.row===row&&visual.source.index===index;
+    const target=visual?.target?.owner===owner&&visual.target.row===row&&visual.target.index===index;
+    const loser=visual?.loser?.owner===owner&&visual.loser.row===row&&visual.loser.index===index;
+    const winner=visual?.winner?.owner===owner&&visual.winner.row===row&&visual.winner.index===index;
+    const reveal=source||target&&visual?.revealTarget||!own && mode==='battle' && game.pending?.defender===owner && game.pending.target.row===row && game.pending.target.index===index;
+    const hidden=visual?(!own||player(owner).cpu)&&!reveal:!own&&!reveal;
+    const active=source||target&&visual?.showTarget;
+    const className=visual?`${!active?'replay-dim':''} ${active?'replay-active':''} ${source&&visual.kind==='reveal'?'replay-flip':''} ${loser?'replay-loser':''} ${winner?'replay-winner':''}`:'';
+    return cardHTML(id,action,own?row:`${owner}:${row}`,index,{hidden,owner,row,target:reveal,className});
   });
   return `<div class="arena-row"><span class="arena-label">${row==='front'?'Front line':'Back line'}</span><div class="line">${cards.join('')}</div></div>`;
 }
@@ -210,19 +241,19 @@ function arenaReserve(owner) {
   if(!p.reserve.length||!['setup','arrange'].includes(game.phase))return '';
   return `<button class="reserve-trigger" data-action="reserve">Reserve ${p.reserve.length} ▴</button>${reserveOpen?`<div class="reserve-overlay"><div class="row"><strong>Reserve cards</strong><button class="button ghost" data-action="reserve">Close</button></div><p class="small muted">Select a card, then tap a board slot.</p><div class="reserve">${p.reserve.map((id,i)=>cardHTML(id,'slot','reserve',i,{owner,row:'reserve'})).join('')}</div></div>`:''}`;
 }
-function renderArena(owner,mode,intro,controls) {
+function renderArena(owner,mode,intro,controls,visual) {
   const candidates=living().filter(i=>i!==owner);
-  const opponent=mode==='battle'&&game.pending?.defender!==owner?game.pending.defender:(candidates.includes(selectedOpponent)?selectedOpponent:candidates[0]);
+  const opponent=visual?.opponent??(mode==='battle'&&game.pending?.defender!==owner?game.pending.defender:(candidates.includes(selectedOpponent)?selectedOpponent:candidates[0]));
   selectedOpponent=opponent;
   const target=opponent==null?null:player(opponent);
-  const chips=mode==='battle'?'':candidates.length>1?`<div class="opponent-chips">${candidates.map(i=>`<button class="opponent-chip ${i===opponent?'active':''}" data-action="opponent" data-index="${i}">${SUITS[i]} ${escapeHTML(player(i).name)}</button>`).join('')}</div>`:'';
-  let middle=`<div class="arena-instruction">${escapeHTML(mode==='refill'?intro:game.message||intro)}</div>`;
-  if(mode==='battle') {
+  const chips=mode==='battle'||visual?'':candidates.length>1?`<div class="opponent-chips">${candidates.map(i=>`<button class="opponent-chip ${i===opponent?'active':''}" data-action="opponent" data-index="${i}">${SUITS[i]} ${escapeHTML(player(i).name)}</button>`).join('')}</div>`:'';
+  let middle=`<div class="arena-instruction">${escapeHTML((visual||mode==='refill')?intro:game.message||intro)}</div>`;
+  if(mode==='battle'||visual?.showDice) {
     const b=game.pending;
     middle=`<div class="clash-dice" data-dice-lane aria-live="off"><div class="clash-side"><span>${label(b.defendCard)}</span><div class="dice">${b.defendDice.map(()=>`<span class="die">?</span>`).join('')}</div></div><span class="clash-versus">vs</span><div class="clash-side"><span>${label(b.attackCard)}</span><div class="dice">${b.attackDice.map(()=>`<span class="die">?</span>`).join('')}</div></div></div>`;
   }
   const own=player(owner);
-  frame(`<section class="arena" aria-label="Battlefield"><div class="arena-opponent"><div class="arena-hud"><strong>${target?`${escapeHTML(target.name)} ${SUITS[opponent]}`:'Your opponent'}</strong><span>${target?`${target.front.filter(Boolean).length+target.back.filter(Boolean).length} cards`:''}</span></div>${chips}${target?arenaRow(opponent,'back',false,mode):''}${target?arenaRow(opponent,'front',false,mode):''}</div><div class="arena-middle">${middle}</div><div class="arena-self"><div class="arena-hud"><strong>${escapeHTML(own.name)} ${SUITS[owner]}</strong><span>◉ ${own.coins} · ${game.attacks}/2 attacks</span></div>${arenaRow(owner,'front',true,mode)}${arenaRow(owner,'back',true,mode)}${arenaReserve(owner)}</div><div class="arena-dock">${controls}</div></section>${arenaDetails()}`,true);
+  frame(`<section class="arena" aria-label="Battlefield"><div class="arena-opponent"><div class="arena-hud"><strong>${target?`${escapeHTML(target.name)} ${SUITS[opponent]}`:'Your opponent'}</strong><span>${target?`${target.front.filter(Boolean).length+target.back.filter(Boolean).length} cards`:''}</span></div>${chips}${target?arenaRow(opponent,'back',false,mode,visual):''}${target?arenaRow(opponent,'front',false,mode,visual):''}</div><div class="arena-middle">${middle}</div><div class="arena-self"><div class="arena-hud"><strong>${escapeHTML(own.name)} ${SUITS[owner]}</strong><span>◉ ${own.coins} · ${game.attacks}/2 attacks</span></div>${arenaRow(owner,'front',true,mode,visual)}${arenaRow(owner,'back',true,mode,visual)}${arenaReserve(owner)}</div><div class="arena-dock ${visual?'replay-dock':''}">${controls}</div></section>${arenaDetails()}`,true);
 }
 function renderPlay() {
   const p = player(game.turn);
@@ -247,7 +278,7 @@ function renderPlay() {
 function renderRefill() {
   const index = game.refill[game.refillIndex], p = player(index);
   const gaps = p.front.filter(id => !id).length;
-  renderArena(index,'refill',gaps?`Fill ${Math.min(gaps,p.back.filter(Boolean).length)} front gap: tap a back card, then the empty front slot.`:'Front line ready.',`<button class="button wide" data-action="refill-done" ${gaps && p.back.some(Boolean)?'disabled':''}>${gaps?'Fill front gap first':'Done →'}</button>`);
+  renderArena(index,'refill',gaps?`Fill ${Math.min(gaps,p.back.filter(Boolean).length)} front gap: tap a back card, then an empty front slot.`:'Front line ready. Tap a newly moved card, then its old back slot to undo.',`<button class="button wide" data-action="refill-done" ${gaps && p.back.some(Boolean)?'disabled':''}>${gaps?'Fill front gap first':'Confirm front line →'}</button>`);
 }
 function queenNeighbor(p, row, index) {
   return [index-1,index+1].filter(i => i>=0 && i<3 && isPeasant(p[row][i] || '')).map(i => ({row,index:i,id:p[row][i]}));
@@ -264,8 +295,9 @@ function diceCount(attacker, defender, source, target) {
 function roll(count) { return Array.from({length:count}, () => random(6)+1); }
 function renderBattle() {
   const b = game.pending;
-  const outcome = b.result === 'tie' ? 'A draw. Both survive.' : b.result === 'attack' ? `${player(b.defender).name} loses ${label(b.defendCard)}.` : `${player(game.turn).name} loses ${label(b.attackCard)}.`;
-  renderArena(game.turn,'battle',outcome,`<div class="battle-result" aria-live="polite" hidden>${escapeHTML(outcome)}</div><button class="button" data-action="battle-next" disabled>${b.result==='attack'&&b.sacrifice.length?'Pass to defender →':'Continue →'}</button>`);
+  const rescue=b.result==='attack'&&b.sacrifice.length?b.sacrifice[weakestSacrifice(b)]:null;
+  const outcome = b.result === 'tie' ? 'A draw. Both survive.' : rescue?`${player(b.defender).name}’s Queen is saved; ${cardTitle(rescue.id)} falls.`:b.result === 'attack' ? `${player(b.defender).name} loses ${label(b.defendCard)}.` : `${player(game.turn).name} loses ${label(b.attackCard)}.`;
+  renderArena(game.turn,'battle',outcome,`<div class="battle-result" aria-live="polite" hidden>${escapeHTML(outcome)}</div><button class="button" data-action="battle-next" disabled>Continue →</button>`);
   animateDice(b);
 }
 function animateDice(b) {
@@ -292,9 +324,71 @@ function animateDice(b) {
   };
   cycle();
 }
+function cardTitle(id) {
+  const r=rank(id);
+  return r==='10'?'Knight (10)':r==='A'?'Assassin (Ace)':r==='K'?'King':r==='Q'?'Queen':r==='J'?'Jack':`Peasant (${r})`;
+}
+function weakestSacrifice(b) {
+  return b.sacrifice.reduce((best,s,i,a)=>value(s.id)<value(a[best].id)?i:best,0);
+}
+function recordComputer(kind,target) {
+  if(computerRecording)computerRecording.push({kind,target,state:structuredClone(game)});
+}
+function runAIWithReplay() {
+  computerRecording=game.mode==='solo'?[]:null;
+  try { runAI(); }
+  finally {
+    if(computerRecording?.length)computerPlayback={frames:computerRecording,index:0};
+    computerRecording=null;
+  }
+}
+function advanceReplay() {
+  if(!computerPlayback)return;
+  clearTimeout(replayTimer);
+  computerPlayback.index++;
+  if(computerPlayback.index>=computerPlayback.frames.length)computerPlayback=null;
+  render();
+}
+function renderPlayback() {
+  const playback=computerPlayback,step=playback.frames[playback.index];
+  const finalGame=game;
+  game=step.state;
+  try {
+    const b=game.pending,attacker=game.turn;
+    const source=b?{owner:attacker,row:b.source.row,index:b.source.index}:{owner:attacker,row:game.selection.location,index:game.selection.index};
+    const target=b?{owner:b.defender,row:b.target.row,index:b.target.index}:step.target;
+    const owner=target.owner,actor=player(attacker).name,opponent=player(owner).name;
+    let narration='';
+    if(step.kind==='reveal'){
+      const title=cardTitle(player(attacker)[source.row][source.index]);
+      narration=`${actor} shows ${/^[AEIOU]/.test(title)?'an':'a'} ${title}!`;
+    }
+    if(step.kind==='target')narration=`${actor}’s ${cardTitle(player(attacker)[source.row][source.index])} attacks ${owner===0?'your':`${opponent}’s`} ${owner===0?cardTitle(player(owner)[target.row][target.index]):'face-down card'}!`;
+    if(step.kind==='roll')narration='The dice tumble…';
+    let loser=null,winner=null;
+    if(step.kind==='result') {
+      if(b.result==='tie')narration='A draw! Both cards survive.';
+      else if(b.result==='attack') {
+        const sacrifice=b.sacrifice.length?weakestSacrifice(b):-1;
+        loser=sacrifice>=0?{owner,row:b.sacrifice[sacrifice].row,index:b.sacrifice[sacrifice].index}:target;
+        winner=source;
+        narration=sacrifice>=0?`${opponent}’s Queen survives; ${cardTitle(b.sacrifice[sacrifice].id)} falls instead.`:`${actor} defeats ${opponent}’s ${cardTitle(b.defendCard)}!`;
+      } else {loser=source;winner=target;narration=`${opponent}’s ${cardTitle(b.defendCard)} defeats ${actor}’s ${cardTitle(b.attackCard)}!`;}
+    }
+    const visual={kind:step.kind,opponent:attacker,source,target,showTarget:step.kind!=='reveal',revealTarget:['roll','result'].includes(step.kind),showDice:['roll','result'].includes(step.kind),loser,winner};
+    renderArena(owner,'replay',narration,`<div class="replay-narration" aria-live="polite">${escapeHTML(narration)}</div><button class="button secondary" data-action="replay-next">${playback.index===playback.frames.length-1?'Done':'Next'} →</button>`,visual);
+    if(step.kind==='roll')animateDice(b);
+    if(step.kind==='result'){
+      const faces=app.querySelectorAll('[data-dice-lane] .die');
+      [...faces].forEach((face,i)=>{face.textContent=[...b.defendDice,...b.attackDice][i];});
+    }
+    clearTimeout(replayTimer);
+    replayTimer=setTimeout(advanceReplay,{reveal:600,target:650,roll:900,result:700}[step.kind]);
+  } finally {game=finalGame;}
+}
 function renderQueen() {
   const b = game.pending, p = player(b.defender);
-  frame(`<div class="phase">Royal sacrifice</div><section class="panel"><h2>Save your Queen?</h2><p class="muted">${escapeHTML(p.name)}, your Queen ${label(b.defendCard)} was defeated. You may lose an adjacent peasant instead.</p><div class="actions">${b.sacrifice.map((slot,i) => `<button class="button secondary" data-action="sacrifice" data-index="${i}">Sacrifice ${label(slot.id)}</button>`).join('')}<button class="button danger" data-action="sacrifice" data-index="-1">Lose the Queen</button></div></section>`);
+  frame(`<section class="panel"><h2>Royal sacrifice</h2><p class="muted">${escapeHTML(p.name)}’s Queen is saved by the weakest adjacent peasant.</p><button class="button wide" data-action="sacrifice">Continue →</button></section>`);
 }
 function renderVictory() {
   const winner = player(living()[0]);
@@ -306,6 +400,7 @@ function renderStalemate() {
 function render() {
   if(incomingBackup) return renderImport();
   if(hubOpen) return renderHub();
+  if(computerPlayback)return renderPlayback();
   if (!game) return renderStart();
   if (game.phase === 'victory') return renderVictory();
   if (game.phase === 'stalemate') return renderStalemate();
@@ -327,7 +422,13 @@ function moveSlot(owner, location, index) {
   const from = game.selection;
   if (from.location===location && from.index===index) { game.selection=null; return; }
   const a = slotAt(p,from.location), b = slotAt(p,location);
-  if (game.phase==='refill' && !(from.location==='back' && location==='front' && !b[index])) return;
+  if (game.phase==='refill') {
+    const forward=from.location==='back'&&location==='front'&&!b[index];
+    const undo=from.location==='front'&&location==='back'&&!b[index]&&game.refillUndo?.find(m=>m.owner===owner&&m.to===from.index&&m.from===index&&m.card===a[from.index]);
+    if(!forward&&!undo){game.selection=null;return;}
+    if(forward)game.refillUndo.push({owner,from:from.index,to:index,card:a[from.index]});
+    if(undo)game.refillUndo.splice(game.refillUndo.indexOf(undo),1);
+  }
   if (from.location==='reserve' && location==='reserve') return;
   // A King must remain in a line; a reserve cannot be used as a safe hiding place.
   if ((location==='reserve' && rank(a[from.index])==='K') || (from.location==='reserve' && b[index] && rank(b[index])==='K')) { game.message='Your King must stay on the battlefield.'; game.selection=null; return; }
@@ -337,7 +438,7 @@ function moveSlot(owner, location, index) {
   game.selection=null;
 }
 function completeRefill() {
-  game.selection=null; game.refillIndex++;
+  game.selection=null; game.refillUndo=[]; game.refillIndex++;
   if (game.refillIndex < game.refill.length) game.view=null;
   else { game.phase='income'; game.view=game.turn; game.message=''; }
 }
@@ -345,7 +446,7 @@ function finishAttacks() {
   game.refill = game.players.map((p,i) => p.alive && p.front.includes(null) && p.back.some(Boolean) ? i : -1).filter(i => i>=0);
   for(const i of game.refill.filter(i=>player(i).cpu)) refillAI(player(i));
   game.refill=game.refill.filter(i=>!player(i).cpu);
-  game.refillIndex=0; game.selection=null;
+  game.refillIndex=0; game.refillUndo=[]; game.selection=null;
   game.message='';
   if (game.refill.length) { game.phase='refill'; game.view=null; }
   else { game.phase='income'; game.message=''; }
@@ -357,8 +458,9 @@ function defeat(owner,row,index) {
   else { p.deck.push(id); p.deck.sort((a,b)=>RANKS.indexOf(rank(a))-RANKS.indexOf(rank(b))); }
 }
 function drawCard(p) { return p.deck.splice(random(p.deck.length),1)[0]; }
-function resolveBattle(sacrificeIndex=-1) {
+function resolveBattle() {
   const b=game.pending;
+  const sacrificeIndex=b.result==='attack'&&b.sacrifice.length?weakestSacrifice(b):-1;
   const defeated=b.result==='attack' ? sacrificeIndex>=0?b.sacrifice[sacrificeIndex].id:b.defendCard : b.result==='defend'?b.attackCard:null;
   game.log ??=[];
   game.log.push(`${player(game.turn).name} ${label(b.attackCard)} [${b.attackDice.join(',')}] vs ${player(b.defender).name} ${label(b.defendCard)} [${b.defendDice.join(',')}]: ${defeated?`${label(defeated)} defeated`:'draw'}.`);
@@ -461,11 +563,14 @@ function runAI(maxSteps=2000) {
       const choice=game.attacks<2 && chooseAIAttack();
       if(!choice) { finishAttacks(); continue; }
       game.selection={location:choice.sourceRow,index:choice.sourceIndex};
+      const target={owner:choice.enemy,row:choice.row,index:choice.index};
+      recordComputer('reveal',target);
+      recordComputer('target',target);
       attack(choice.enemy,choice.row,choice.index);
+      recordComputer('roll');
     } else if(game.phase==='battle') {
-      if(game.pending.sacrifice.length && !player(game.pending.defender).cpu) { game.phase='queen'; game.view=null; return; }
-      const sacrifice=game.pending.sacrifice.length ? game.pending.sacrifice.reduce((best,s,i,a)=>value(s.id)<value(a[best].id)?i:best,0) : -1;
-      resolveBattle(sacrifice);
+      recordComputer('result');
+      resolveBattle();
     } else if(game.phase==='refill') {
       // A human refill needs the private handoff screen.
       if(game.refill.length) { game.view=null; return; }
@@ -497,7 +602,13 @@ app.addEventListener('input', event => {
   if (event.target.matches('[data-name]')) draft.names[Number(event.target.dataset.name)] = event.target.value;
 });
 app.addEventListener('click', event => {
-  const button=event.target.closest('[data-action]'); if (!button) return;
+  const button=event.target.closest('[data-action]');
+  if(computerPlayback) {
+    if(button?.dataset.action==='games') { clearTimeout(replayTimer);computerPlayback=null;hubOpen=true;render(); }
+    else advanceReplay();
+    return;
+  }
+  if (!button) return;
   const action=button.dataset.action, index=Number(button.dataset.index);
   if(action==='backup' && game) {
     backupText=location.href.split('#')[0]+'#backup='+StateCodec.encode(game);
@@ -551,14 +662,11 @@ app.addEventListener('click', event => {
       return;
     }
     if (action==='target' && game.phase==='attack') { const [owner,row]=button.dataset.location.split(':'); attack(Number(owner),row,index); return; }
-    if (action==='battle-next' && game.phase==='battle') {
-      if (game.pending.sacrifice.length) { game.phase='queen'; game.view=null; }
-      else resolveBattle(); return;
-    }
-    if (action==='sacrifice' && game.phase==='queen') { resolveBattle(index); if(player(game.turn).cpu) runAI(); return; }
+    if (action==='battle-next' && game.phase==='battle') { resolveBattle(); return; }
+    if (action==='sacrifice' && game.phase==='queen') { resolveBattle(); if(player(game.turn).cpu) runAIWithReplay(); return; }
     if (action==='finish-attacks' && game.phase==='attack') { finishAttacks(); return; }
-    if (action==='refill-done' && game.phase==='refill') { const p=player(game.refill[game.refillIndex]); if (!p.front.includes(null) || !p.back.some(Boolean)) { completeRefill(); if(player(game.turn).cpu) runAI(); } return; }
-    if (action==='income' && game.phase==='income') { player(game.turn).coins+=game.kills+(hasCard(player(game.turn),'J')?1:0); advanceTurn(); runAI(); }
+    if (action==='refill-done' && game.phase==='refill') { const p=player(game.refill[game.refillIndex]); if (!p.front.includes(null) || !p.back.some(Boolean)) { completeRefill(); if(player(game.turn).cpu) runAIWithReplay(); } return; }
+    if (action==='income' && game.phase==='income') { player(game.turn).coins+=game.kills+(hasCard(player(game.turn),'J')?1:0); advanceTurn(); runAIWithReplay(); }
   });
 });
 if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(console.error));
