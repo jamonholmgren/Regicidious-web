@@ -93,4 +93,9 @@ body{min-height:100dvh;overflow-x:hidden;overscroll-behavior:none}
 .score-top{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
 .score-tabs{display:flex;gap:8px;margin:16px 0}
 .score-tabs button{flex:1}
+.rating-panel{margin-bottom:14px}
+.rating-panel h2{margin:8px 0 2px}
+.rating-opponents{display:grid;gap:0;margin:12px 0}
+.rating-opponents>div{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-top:1px solid #ffffff26;font-size:.9rem}
+.rating-opponents span{color:#d9e2d7}
 @media(max-height:700px){.tutorial-side .card{aspect-ratio:1.6}.tutorial-guidance{font-size:.9rem}}

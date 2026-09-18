@@ -8,6 +8,7 @@ const ACTIVE_KEY = 'regicidious.active';
 const PLAYER_NAME_KEY = 'regicidious.player-name';
 const PLAYER_EMOJI_KEY = 'regicidious.player-emoji';
 const SCORES_KEY = 'regicidious.scores.v1';
+const RATING_KEY = 'regicidious.ratings.v1';
 const MIGRATED_KEY = 'regicidious.legacy-imported';
 const SUITS = ['♠', '♥', '♣', '♦'];
 const NAMES = ['Spades', 'Hearts', 'Clubs', 'Diamonds'];
@@ -43,7 +44,8 @@ let pasteOpen=false;
 let inviteLinks={};
 let setupOpen=false,installDismissed=false,deleteTimer=null,buyPrompt=null,buyPromptTimer=null,completedOpen=false;
 let retreatArmed=null,retreatTimer=null;
-let scoresOpen=false,scoreLayout='expanded',scoreLink='',scoreLinkSource='',scoreLinkBusy=false,scoreLinkError='',incomingScores=null,scoreImportNotice='';
+let scoresOpen=false,scoreLayout='expanded',scoreLink='',scoreLinkSource='',scoreLinkBusy=false,scoreLinkError='',incomingScores=null,incomingRatings=null,scoreImportNotice='';
+let ratingError='',ratingReconciled=false;
 let tutorialOpen=false,tutorialStep=0,tutorialRolling=false,tutorialDice=null,tutorialTimer=null;
 const expandedGameDates=new Set();
 const SEAT_COOKIE='rgseat_';
@@ -350,13 +352,37 @@ function recordSoloScore(saved) {
   const encoded=ScoreCodec.encode(merged.entries);
   if(localStorage.getItem(SCORES_KEY)!==encoded)localStorage.setItem(SCORES_KEY,encoded);
 }
+function readRatingLedger(){
+  const raw=localStorage.getItem(RATING_KEY);
+  return raw?RatingCodec.decode(raw):[];
+}
+function recordSoloRating(saved){
+  const event=RatingCodec.fromGame(saved);
+  if(!event)return;
+  const prior=readRatingLedger(),merged=RatingCodec.merge(prior,[event]);
+  const encoded=RatingCodec.encode(merged.events);
+  if(localStorage.getItem(RATING_KEY)!==encoded)localStorage.setItem(RATING_KEY,encoded);
+}
+function reconcileRatings(){
+  if(ratingReconciled)return;
+  const prior=readRatingLedger();
+  const recovered=gameSlots().map(slot=>RatingCodec.fromGame(slot.game)).filter(Boolean);
+  const merged=RatingCodec.merge(prior,recovered);
+  if(merged.events.length!==prior.length)localStorage.setItem(RATING_KEY,RatingCodec.encode(merged.events));
+  ratingReconciled=true;
+}
+function ratingStandings(layout){
+  try{reconcileRatings();return RatingCodec.standings(readRatingLedger(),layout);}
+  catch(error){ratingError='Could not read your saved ratings. Your games and score table were kept.';console.error(error);return null;}
+}
 function scoreDate(seconds) {
   return new Date(seconds*1000).toLocaleDateString('en-US',{month:'2-digit',day:'2-digit',year:'2-digit'});
 }
 function ensureScoreLink() {
   let source;
-  try { source=ScoreCodec.encode(readScoreTable()); }
-  catch(error){scoreLinkError='Could not read the score table backup.';console.error(error);return;}
+  try { source=ScoreCodec.encode(readScoreTable())+';'+RatingCodec.encode(readRatingLedger()); }
+  catch(error){scoreLink='';scoreLinkError='Could not read the score table backup.';console.error(error);return;}
+  if(source.length>48000){scoreLink='';scoreLinkError='The records are too large for one link. Your local records remain saved; back up completed games individually.';return;}
   if(scoreLinkSource===source&&(scoreLink||scoreLinkBusy))return;
   scoreLinkSource=source;scoreLink='';scoreLinkBusy=true;scoreLinkError='';
   LinkCodec.seal(source).then(token=>{
@@ -408,6 +434,7 @@ function commit(change) {
   try { localStorage.setItem(ACTIVE_KEY,slotId); }
   catch (error) { console.error(error); }
   if(game.phase==='victory')try { recordSoloScore(game); } catch(error){scoreLinkError='Victory saved, but the score table could not be updated.';console.error(error);}
+  if(game.phase==='victory')try { recordSoloRating(game); } catch(error){ratingError='Match saved, but the rating ledger could not be updated.';console.error(error);}
   try {
     const now=Date.now(),dates=previousSlot===slotId?readDates(slotId):{started:now,last:now};
     localStorage.setItem(META_PREFIX+slotId,`${dates.started};${now}`);
@@ -494,13 +521,15 @@ function renderHub() {
 function renderScores() {
   let entries=[];
   try { entries=readScoreTable(); } catch(error){scoreLinkError='This score table could not be read. Its saved data was kept.';console.error(error);}
+  const ladder=ratingStandings(scoreLayout);
+  const elo=ladder?`<section class="panel rating-panel"><div class="phase">Personal Elo · ${scoreLayout}</div><h2>You · ${Math.round(ladder.ratings.human).toLocaleString()}</h2><p class="muted small">${ladder.records.human.wins} wins · ${ladder.records.human.losses} losses</p><div class="rating-opponents">${[['serf','Serf'],['captain','Captain'],['warlord','Warlord']].map(([id,name])=>`<div><strong>${name}</strong><span>${Math.round(ladder.ratings[id]).toLocaleString()} · ${ladder.records[id].wins}W ${ladder.records[id].losses}L</span></div>`).join('')}</div><p class="muted small">Each finished 1v1 transfers Elo between you and that opponent. The pool starts at 4,000 total; beating one bot repeatedly yields less each time.</p></section>`:'';
   ensureScoreLink();
   const slots=new Map(gameSlots().filter(s=>s.game.phase==='victory').map(s=>[s.game.matchId,s]));
   const rows=entries.filter(e=>e.layout===scoreLayout).map((e,i)=>{
     const saved=slots.get(e.id),replay=saved&&canReplay(saved.game);
     return `<section class="panel score-row"><div class="score-top"><strong>#${i+1} · ${e.score.toLocaleString()} points</strong><span>${scoreDate(e.date)}</span></div><p>${e.emoji} ${escapeHTML(e.name)} · ${e.difficulty==='serf'?'Serf':e.difficulty==='captain'?'Captain':'Warlord'} · ${e.turns} ${e.turns===1?'turn':'turns'}</p><p class="muted small">Match ${e.id.slice(0,8)}</p><div class="actions">${replay?`<button class="button secondary" data-action="replay-game" data-id="${saved.id}">Replay</button>`:`<span class="muted small">Replay unavailable${saved?'':' · restore the game backup'}</span>`}${saved?`<button class="button ghost" data-action="backup-slot" data-id="${saved.id}">Make game backup</button>`:''}</div>${saved&&backupForSlot===saved.id&&backupText?`<textarea readonly rows="3">${escapeHTML(backupText)}</textarea><button class="button secondary" data-action="copy-backup">Copy game link</button>`:''}</section>`;
   }).join('');
-  frame(`<section class="score-heading"><div class="phase">Personal records · solo 1v1</div><h1>High scores</h1><p>Victory earns 1,000 points, plus up to 1,000 for speed. Each extra commander turn costs 50 speed points. Serf ×1, Captain ×1.25, Warlord ×1.5.</p></section>${scoreImportNotice?`<p class="status">${escapeHTML(scoreImportNotice)}</p>`:''}<div class="score-tabs"><button class="button ${scoreLayout==='expanded'?'':'secondary'}" data-action="score-layout" data-value="expanded">Expanded</button><button class="button ${scoreLayout==='classic'?'':'secondary'}" data-action="score-layout" data-value="classic">Classic</button></div>${rows||'<p class="muted">No solo 1v1 victories on this board yet.</p>'}<section class="panel"><h2>Keep your records</h2><p class="muted small">This link holds scores and match IDs, not the games or their cards. Back up games separately if you want to replay them.</p>${scoreLinkError?`<p class="status">${escapeHTML(scoreLinkError)}</p>`:''}<div class="actions"><button class="button secondary" data-action="copy-scores" ${scoreLink?'':'disabled'}>Copy table link</button><button class="button secondary" data-action="share-scores" ${scoreLink?'':'disabled'}>Send table link</button></div><details><summary>Show score table link</summary><textarea readonly rows="3">${escapeHTML(scoreLink||'Preparing link…')}</textarea></details></section>${pastePanel()}`);
+  frame(`<section class="score-heading"><div class="phase">Personal records · solo 1v1</div><h1>High scores</h1><p>Victory earns 1,000 points, plus up to 1,000 for speed. Each extra commander turn costs 50 speed points. Serf ×1, Captain ×1.25, Warlord ×1.5.</p></section>${scoreImportNotice?`<p class="status">${escapeHTML(scoreImportNotice)}</p>`:''}<div class="score-tabs"><button class="button ${scoreLayout==='expanded'?'':'secondary'}" data-action="score-layout" data-value="expanded">Expanded</button><button class="button ${scoreLayout==='classic'?'':'secondary'}" data-action="score-layout" data-value="classic">Classic</button></div>${ratingError?`<p class="status">${escapeHTML(ratingError)}</p>`:''}${elo}${rows||'<p class="muted">No solo 1v1 victories on this board yet.</p>'}<section class="panel"><h2>Keep your records</h2><p class="muted small">This link holds scores, match IDs, and rating results—not the games or their cards. Back up games separately if you want to replay them.</p>${scoreLinkError?`<p class="status">${escapeHTML(scoreLinkError)}</p>`:''}<div class="actions"><button class="button secondary" data-action="copy-scores" ${scoreLink?'':'disabled'}>Copy table link</button><button class="button secondary" data-action="share-scores" ${scoreLink?'':'disabled'}>Send table link</button></div><details><summary>Show score table link</summary><textarea readonly rows="3">${escapeHTML(scoreLink||'Preparing link…')}</textarea></details></section>${pastePanel()}`);
 }
 function setTutorialStep(step) {
   tutorialStep=step;tutorialDice=null;
@@ -555,7 +584,7 @@ function renderTutorial() {
 function renderScoreImport() {
   const classic=incomingScores.filter(e=>e.layout==='classic').length;
   const expanded=incomingScores.length-classic;
-  frame(`<section class="panel dispatch"><div class="phase">Personal score backup</div><h1>Restore high scores?</h1><p>${expanded} Expanded and ${classic} Classic records. This link holds no cards or game replays.</p><p>Your current scores and games stay here. Matching game IDs are merged, not duplicated.</p><button class="button wide" data-action="restore-scores">Merge score table</button></section>`);
+  frame(`<section class="panel dispatch"><div class="phase">Personal score backup</div><h1>Restore high scores?</h1><p>${expanded} Expanded and ${classic} Classic scores${incomingRatings?`, plus ${incomingRatings.length} rating results`:''}. This link holds no cards or game replays.</p><p>Your current scores and games stay here. Matching game IDs are merged, not duplicated.</p><button class="button wide" data-action="restore-scores">Merge score table</button></section>`);
 }
 function playerChips(saved) {
   return `<div class="dispatch-seats">${saved.players.map((p,i)=>`<span class="suit-chip">${p.emoji} ${SUITS[i]} ${escapeHTML(p.name)}</span>`).join('')}</div>`;
@@ -605,7 +634,8 @@ function renderSetup() {
   const modes=[['solo','Solo vs computer'],['local','Pass the phone'],['text','Text-message multiplayer']];
   const layouts=[['expanded','Expanded · 4 across, 7 cards'],['classic','Classic · 3 across, 6 cards']];
   const royalRules=`<p class="small muted">The first commander gets one opening attack. Later turns allow two attacks with different cards. A neighboring peasant lends the Queen a die when she attacks and falls in her place if she loses. When the King defends, a neighboring peasant takes a winning hit for him. The weakest adjacent peasant falls first.</p>`;
-  const difficulty=draft.mode==='solo'?`<div class="label">Enemy commander</div><div class="actions mode-actions">${[['serf','Serf · easy'],['captain','Captain · normal'],['warlord','Warlord · hard']].map(([id,title])=>`<button class="button ${draft.difficulty===id?'':'ghost'}" data-action="difficulty" data-value="${id}">${title}</button>`).join('')}</div><p class="small muted">Serf charges recklessly. Captain weighs the odds. Warlord guards the crown and picks fights carefully.</p>`:'';
+  const ladder=draft.mode==='solo'?ratingStandings(draft.layout):null;
+  const difficulty=draft.mode==='solo'?`<div class="label">Enemy commander</div><div class="actions mode-actions">${[['serf','Serf · easy'],['captain','Captain · normal'],['warlord','Warlord · hard']].map(([id,title])=>`<button class="button ${draft.difficulty===id?'':'ghost'}" data-action="difficulty" data-value="${id}">${title}${ladder?` · Elo ${Math.round(ladder.ratings[id])}`:''}</button>`).join('')}</div><p class="small muted">Serf charges recklessly. Captain weighs the odds. Warlord guards the crown and picks fights carefully.</p>`:'';
   const identityInput=i=>`<div class="player-identity"><label class="field"><span>${i===0?'Your name · tap to change':`${NAMES[i]} · suggested name`}</span><input data-name="${i}" maxlength="24" value="${escapeHTML(draft.names[i])}" autocomplete="off"></label><label class="field emoji-field"><span>Emoji</span><select data-emoji="${i}" aria-label="${escapeHTML(draft.names[i])} emoji">${EMOJIS.map(emoji=>`<option value="${emoji}"${draft.emojis[i]===emoji?' selected':''}>${emoji}</option>`).join('')}</select></label></div>`;
   const otherInputs=draft.mode==='solo'?'':draft.names.slice(1,draft.count).map((_,i)=>identityInput(i+1)).join('');
   frame(`<div class="setup-heading"><button class="button ghost" data-action="setup-back">‹ Back</button><h1>New game</h1></div><section class="panel setup-panel"><p class="flavor">M’lord, our enemies are at the gates. We must prepare for war!</p><div class="label">Your banner</div>${identityInput(0)}<div class="label">Mode</div><div class="actions mode-actions">${modes.map(([mode,title])=>`<button class="button ${draft.mode===mode?'':'ghost'}" data-action="mode" data-value="${mode}">${title}</button>`).join('')}</div><div class="label">Battle lines</div><div class="actions mode-actions">${layouts.map(([layout,title])=>`<button class="button ${draft.layout===layout?'':'ghost'}" data-action="layout" data-value="${layout}">${title}</button>`).join('')}</div>${difficulty}${royalRules}<div class="label">${draft.mode==='solo'?'Computer opponents':'Players'}</div><div class="actions">${[2,3,4].map(n=>`<button class="button ${draft.count===n?'':'ghost'}" data-action="count" data-value="${n}">${draft.mode==='solo'?n-1:n}</button>`).join('')}</div>${otherInputs?`<div class="stack" style="margin-top:18px">${otherInputs}</div><p class="small muted">These are suggestions. Each player chooses their own name and emoji before setting up their lines.</p>`:''}${draft.mode==='text'?`<p class="small muted">Send each player their private invite on the next screen, then declare war. Links discourage casual peeking but are not cheat-proof.</p>`:''}<button class="button wide begin-game" data-action="start">${draft.mode==='text'?'Prepare invitations →':'Begin the war →'}</button></section>`);
@@ -1072,8 +1102,10 @@ function renderVictory() {
   const winner = player(living()[0]);
   if(game.mode==='text')ensureTurnLink();
   const score=ScoreCodec.entryFromGame(game);
+  const rated=RatingCodec.fromGame(game),ladder=rated?ratingStandings(game.layout):null,change=rated&&ladder?.changes[rated.id];
+  const ratingPanel=change?`<section class="panel"><h2>Your Elo · ${Math.round(change.after).toLocaleString()}</h2><p class="muted">${change.delta>=0?'+':''}${Math.round(change.delta)} against ${escapeHTML(player(1).name)}. ${game.layout==='classic'?'Classic':'Expanded'} ratings are separate.</p><button class="button secondary wide" data-action="scores-open">See ratings & high scores</button></section>`:'';
   const scorePanel=score?`<section class="panel"><h2>${score.score.toLocaleString()} points</h2><p class="muted">${score.turns} commander ${score.turns===1?'turn':'turns'} against ${score.difficulty}. Your score is saved in the ${score.layout} table.</p><button class="button secondary wide" data-action="scores-open">See high scores</button></section>`:'';
-  frame(`<section class="hero"><div class="crown">♛</div><div class="phase">The kingdom stands</div><h1>${escapeHTML(winner.name)} wins.</h1><p>${SUITS[winner.suit]} ${NAMES[winner.suit]} is the last kingdom standing.</p></section>${scorePanel}${canReplayLast()||canReplay(game)?`<section class="panel"><h2>Watch it again</h2><p class="muted small">${canReplay(game)?'Replay every turn with all cards visible. The saved game is not changed.':'Watch the last fights again. Cards return to their hidden live faces afterward.'}</p>${replayLastButton()}${canReplay(game)?`<button class="button wide" data-action="replay-game">Replay game</button>`:''}</section>`:''}${game.mode==='text'?`<section class="panel"><h2>Tell the group</h2>${turnLink?`<div class="actions"><button class="button" data-action="copy-turn">Copy result</button><button class="button secondary" data-action="share-turn">Send result to group</button></div>`:'<p class="muted">Preparing result link…</p>'}</section>`:''}<section class="panel"><h2>Another game?</h2><p class="muted small">Starting another game leaves this one in your Games list.</p><button class="button secondary wide" data-action="new-after-win">New game</button></section>`);
+  frame(`<section class="hero"><div class="crown">♛</div><div class="phase">The kingdom stands</div><h1>${escapeHTML(winner.name)} wins.</h1><p>${SUITS[winner.suit]} ${NAMES[winner.suit]} is the last kingdom standing.</p></section>${ratingPanel}${scorePanel}${canReplayLast()||canReplay(game)?`<section class="panel"><h2>Watch it again</h2><p class="muted small">${canReplay(game)?'Replay every turn with all cards visible. The saved game is not changed.':'Watch the last fights again. Cards return to their hidden live faces afterward.'}</p>${replayLastButton()}${canReplay(game)?`<button class="button wide" data-action="replay-game">Replay game</button>`:''}</section>`:''}${game.mode==='text'?`<section class="panel"><h2>Tell the group</h2>${turnLink?`<div class="actions"><button class="button" data-action="copy-turn">Copy result</button><button class="button secondary" data-action="share-turn">Send result to group</button></div>`:'<p class="muted">Preparing result link…</p>'}</section>`:''}<section class="panel"><h2>Another game?</h2><p class="muted small">Starting another game leaves this one in your Games list.</p><button class="button secondary wide" data-action="new-after-win">New game</button></section>`);
 }
 function renderStalemate() {
   frame(`<section class="hero"><div class="crown">♛</div><h1>No winner yet.</h1><p>This match reached the computer-play safety limit. Its full state is saved in your Games list.</p></section><section class="panel"><button class="button secondary wide" data-action="new-game">Start another game</button></section>`);
@@ -1438,9 +1470,11 @@ app.addEventListener('click', event => {
   if(action==='restore-scores'&&incomingScores){
     try{
       const merged=ScoreCodec.merge(readScoreTable(),incomingScores);
+      const ratings=incomingRatings?RatingCodec.merge(readRatingLedger(),incomingRatings):null;
+      if(ratings)localStorage.setItem(RATING_KEY,RatingCodec.encode(ratings.events));
       localStorage.setItem(SCORES_KEY,ScoreCodec.encode(merged.entries));
-      scoreImportNotice=merged.conflicts?'Scores merged. Conflicting IDs kept their local records.':'Scores merged with your existing records.';
-      incomingScores=null;scoresOpen=true;hubOpen=false;history.replaceState(null,'',location.pathname+location.search);render();
+      scoreImportNotice=merged.conflicts||ratings?.conflicts.length?'Records merged. Conflicting match IDs kept their local results.':'Records merged with your existing games and scores.';
+      incomingScores=null;incomingRatings=null;scoresOpen=true;hubOpen=false;history.replaceState(null,'',location.pathname+location.search);render();
     }catch(error){backupError='Could not save the score table. Your existing records were kept.';console.error(error);render();}
     return;
   }
@@ -1523,7 +1557,7 @@ app.addEventListener('click', event => {
     if(index!==owner&&living().includes(index)){selectedOpponent=index;render();}
     return;
   }
-  if(action==='games') { stopMatchReplay();closeTutorial();scoresOpen=false;incomingRequest++;lastIncomingLocationHash='';incomingBackup=null;incomingScores=null;incomingKind=null;incomingSeat=null;linkLoading=false;backupError='';history.replaceState(null,'',location.pathname+location.search);hubOpen=true;completedOpen=false;sheetOpen=false;reserveOpen=false;backupText='';render();return; }
+  if(action==='games') { stopMatchReplay();closeTutorial();scoresOpen=false;incomingRequest++;lastIncomingLocationHash='';incomingBackup=null;incomingScores=null;incomingRatings=null;incomingKind=null;incomingSeat=null;linkLoading=false;backupError='';history.replaceState(null,'',location.pathname+location.search);hubOpen=true;completedOpen=false;sheetOpen=false;reserveOpen=false;backupText='';render();return; }
   if(action==='completed-games') { stopMatchReplay();hubOpen=true;completedOpen=true;sheetOpen=false;reserveOpen=false;backupText='';render();return; }
   if(action==='new-game' || action==='new-after-win') { stopMatchReplay();closeTutorial();scoresOpen=false;clearLinkError();game=null;slotId=null;hubOpen=false;completedOpen=false;setupOpen=true;sheetOpen=false;reserveOpen=false;backupText='';render();return; }
   if(action==='replay-game') {
@@ -1709,13 +1743,18 @@ let lastIncomingLocationHash='';
 async function openIncomingHash(hash){
   const request=++incomingRequest;
   computerPlayback=null;clearTimeout(replayTimer);stopMatchReplay();
-  linkLoading=true;backupError='';incomingBackup=null;incomingScores=null;incomingKind=null;incomingSeat=null;render();
+  linkLoading=true;backupError='';incomingBackup=null;incomingScores=null;incomingRatings=null;incomingKind=null;incomingSeat=null;render();
   try {
     const kind=hash.startsWith('#turn=')?'turn':hash.startsWith('#scores=')?'scores':'backup';
     const token=hash.slice(kind==='turn'?6:kind==='scores'?8:8);
     let decoded=token.startsWith('E1.')?await LinkCodec.open(token):token;
     if(request!==incomingRequest)return;
-    if(kind==='scores'){incomingScores=ScoreCodec.decode(decoded);linkLoading=false;render();return;}
+    if(kind==='scores'){
+      const parts=decoded.split(';');
+      if(parts.length>2||!parts[0]?.startsWith('S1.')||parts.length===2&&!parts[1]?.startsWith('R1.'))throw Error('Invalid records backup');
+      incomingScores=ScoreCodec.decode(parts[0]);incomingRatings=parts.length===2?RatingCodec.decode(parts[1]):null;
+      linkLoading=false;render();return;
+    }
     if(kind==='backup'&&decoded.startsWith('P1:')){
       const match=/^P1:([0-3]):(B1\..+)$/.exec(decoded);
       if(!match)throw Error('Invalid seat backup');
