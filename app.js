@@ -249,7 +249,7 @@ async function prepareBackupFor(saved,id) {
 function battleSentence(saved,e) {
   const actor=saved.players[e.actor].name,defender=saved.players[e.defender].name;
   if(e.result==='tie')return `${actor}’s ${cardTitle(e.attackCard)} and ${defender}’s ${cardTitle(e.defendCard)} fought to a draw!`;
-  if(e.sacrifice){const owner=e.result==='attack'?e.defender:e.actor;const board=e.result==='attack'?e.beforeDefender:e.beforeActor;const fl=board.length>>1;const id=board[(e.sacrifice.row==='back'?fl:0)+e.sacrifice.index];return `${saved.players[owner].name}’s Queen survived; ${cardTitle(id)} fell instead!`;}
+  if(e.sacrifice){const owner=e.result==='attack'?e.defender:e.actor;const board=e.result==='attack'?e.beforeDefender:e.beforeActor;const fl=board.length>>1;const id=board[(e.sacrifice.row==='back'?fl:0)+e.sacrifice.index];return royalSacrificeSentence(saved.players[owner].name,e.result==='attack'?e.defendCard:e.attackCard,id);}
   if(e.result==='defend')return `${defender}’s ${cardTitle(e.defendCard)} defended itself and slew ${actor}’s ${cardTitle(e.attackCard)}.`;
   return `${actor}’s ${cardTitle(e.attackCard)} defeated ${defender}’s ${cardTitle(e.defendCard)}!`;
 }
@@ -451,7 +451,7 @@ function renderStart() {
 function renderSetup() {
   const modes=[['solo','Solo vs computer'],['local','Pass the phone'],['text','Text-message multiplayer']];
   const layouts=[['expanded','Expanded · 4 across, 7 cards'],['classic','Classic · 3 across, 6 cards']];
-  const queenRules=`<div class="label">Queen’s guard</div><div class="actions mode-actions"><button class="button ${draft.queenRule==='original'?'':'ghost'}" data-action="queen-rule" data-value="original">Shane’s notes</button><button class="button ${draft.queenRule==='cedric'?'':'ghost'}" data-action="queen-rule" data-value="cedric">Cedric’s memory</button></div><p class="small muted">Shane’s notes: a neighboring peasant lends the Queen a die in attack or defense, and dies if she loses on defense. Cedric’s memory: the die applies only when she attacks; that peasant dies if her attack loses. Two attacks per turn in either version.</p>`;
+  const queenRules=`<div class="label">Queen’s guard</div><div class="actions mode-actions"><button class="button ${draft.queenRule==='original'?'':'ghost'}" data-action="queen-rule" data-value="original">Shane’s notes</button><button class="button ${draft.queenRule==='cedric'?'':'ghost'}" data-action="queen-rule" data-value="cedric">Cedric’s memory</button></div><p class="small muted">Shane’s notes: a neighboring peasant lends the Queen a die in attack or defense, and dies if she loses on defense. Cedric’s memory: the die applies only when she attacks; that peasant dies if her attack loses. Two attacks per turn in either version. In both, an adjacent peasant takes a winning hit meant for the defending King; the weakest goes first.</p>`;
   frame(`<div class="setup-heading"><button class="button ghost" data-action="setup-back">‹ Back</button><h1>New game</h1></div><section class="panel setup-panel"><p class="flavor">M’lord, our enemies are at the gates. We must prepare for war!</p><div class="label">Mode</div><div class="actions mode-actions">${modes.map(([mode,title])=>`<button class="button ${draft.mode===mode?'':'ghost'}" data-action="mode" data-value="${mode}">${title}</button>`).join('')}</div><div class="label">Battle lines</div><div class="actions mode-actions">${layouts.map(([layout,title])=>`<button class="button ${draft.layout===layout?'':'ghost'}" data-action="layout" data-value="${layout}">${title}</button>`).join('')}</div>${queenRules}<div class="label">${draft.mode==='solo'?'Computer opponents':'Players'}</div><div class="actions">${[2,3,4].map(n=>`<button class="button ${draft.count===n?'':'ghost'}" data-action="count" data-value="${n}">${draft.mode==='solo'?n-1:n}</button>`).join('')}</div><div class="stack" style="margin-top:18px">${draft.names.slice(0,draft.mode==='solo'?1:draft.count).map((name,i)=>`<label class="field"><span>${SUITS[i]} ${draft.mode==='solo'?'Your name':NAMES[i]}</span><input data-name="${i}" maxlength="24" value="${escapeHTML(name)}" autocomplete="off"></label>`).join('')}</div>${draft.mode==='text'?`<p class="small muted">Name every player now. After setting your own lines, send each person their invite. Links discourage casual peeking but are not cheat-proof.</p>`:''}<button class="button wide begin-game" data-action="start">Begin the war →</button></section>`);
 }
 function renderVeil() {
@@ -547,7 +547,7 @@ function renderRefill() {
   const gaps = p.front.filter(id => !id).length;
   renderArena(index,'refill',gaps?`Fill ${Math.min(gaps,p.back.filter(Boolean).length)} front gap: tap a back card, then an empty front slot.`:'Front line ready. Tap a newly moved card, then its old back slot to undo.',`<button class="button wide" data-action="refill-done" ${gaps && p.back.some(Boolean)?'disabled':''}>${gaps?'Fill front gap first':'Confirm front line →'}</button>`);
 }
-function queenNeighbor(p, row, index) {
+function adjacentPeasants(p, row, index) {
   const cols=p[row]?.length||3;
   return [index-1,index+1].filter(i => i>=0 && i<cols && isPeasant(p[row][i] || '')).map(i => ({row,index:i,id:p[row][i]}));
 }
@@ -564,15 +564,15 @@ function diceCount(attacker, defender, source, target) {
   if (value(attacker) > value(defender)) a++;
   if (value(defender) > value(attacker)) d++;
   if (rank(attacker)==='10' && target.row==='front') a++;
-  if (rank(attacker)==='Q' && queenNeighbor(player(game.turn),source.row,source.index).length) a++;
-  if (game.queenRule!=='cedric' && rank(defender)==='Q' && queenNeighbor(player(target.player),target.row,target.index).length) d++;
+  if (rank(attacker)==='Q' && adjacentPeasants(player(game.turn),source.row,source.index).length) a++;
+  if (game.queenRule!=='cedric' && rank(defender)==='Q' && adjacentPeasants(player(target.player),target.row,target.index).length) d++;
   return [a,d];
 }
 function roll(count) { return Array.from({length:count}, () => random(6)+1); }
 function renderBattle() {
   const b = game.pending;
   const rescue=b.sacrifice.length?b.sacrifice[weakestSacrifice(b)]:null;
-  const outcome = b.result === 'tie' ? 'A draw. Both survive.' : rescue?`${player(b.result==='attack'?b.defender:game.turn).name}’s Queen is saved; ${cardTitle(rescue.id)} falls.`:b.result === 'attack' ? `${player(b.defender).name} loses ${label(b.defendCard)}.` : `${player(game.turn).name} loses ${label(b.attackCard)}.`;
+  const outcome = b.result === 'tie' ? 'A draw. Both survive.' : rescue?royalSacrificeSentence(player(b.result==='attack'?b.defender:game.turn).name,b.result==='attack'?b.defendCard:b.attackCard,rescue.id):b.result === 'attack' ? `${player(b.defender).name} loses ${label(b.defendCard)}.` : `${player(game.turn).name} loses ${label(b.attackCard)}.`;
   renderArena(game.turn,'battle',outcome,`<button class="button" data-action="battle-next" disabled>Continue →</button>`);
   animateDice(b);
 }
@@ -603,6 +603,9 @@ function animateDice(b) {
 function cardTitle(id) {
   const r=rank(id);
   return r==='10'?'Knight (10)':r==='A'?'Assassin (Ace)':r==='K'?'King':r==='Q'?'Queen':r==='J'?'Jack':`Peasant (${r})`;
+}
+function royalSacrificeSentence(name,royal,soldier) {
+  return rank(royal)==='K'?`${name}’s ${cardTitle(soldier)} throws himself in front of the lance! The King survives.`:`${name}’s Queen survives; ${cardTitle(soldier)} falls instead.`;
 }
 function weakestSacrifice(b) {
   return b.sacrifice.reduce((best,s,i,a)=>value(s.id)<value(a[best].id)?i:best,0);
@@ -673,11 +676,11 @@ function renderPlayback() {
         const sacrifice=b.sacrifice.length?weakestSacrifice(b):-1;
         loser=sacrifice>=0?{owner,row:b.sacrifice[sacrifice].row,index:b.sacrifice[sacrifice].index}:target;
         winner=source;
-        narration=sacrifice>=0?`${opponent}’s Queen survives; ${cardTitle(b.sacrifice[sacrifice].id)} falls instead.`:`${actor} defeats ${opponent}’s ${cardTitle(b.defendCard)}!`;
+        narration=sacrifice>=0?royalSacrificeSentence(opponent,b.defendCard,b.sacrifice[sacrifice].id):`${actor} defeats ${opponent}’s ${cardTitle(b.defendCard)}!`;
       } else {
         const sacrifice=b.sacrifice.length?b.sacrifice[weakestSacrifice(b)]:null;
         loser=sacrifice?{owner:attacker,row:sacrifice.row,index:sacrifice.index}:source;winner=target;
-        narration=sacrifice?`${actor}’s Queen survives; ${cardTitle(sacrifice.id)} falls instead.`:`${opponent}’s ${cardTitle(b.defendCard)} defeats ${actor}’s ${cardTitle(b.attackCard)}!`;
+        narration=sacrifice?royalSacrificeSentence(actor,b.attackCard,sacrifice.id):`${opponent}’s ${cardTitle(b.defendCard)} defeats ${actor}’s ${cardTitle(b.attackCard)}!`;
       }
     }
     const visual={kind:step.kind,opponent:attacker,source,target,showTarget:step.kind!=='reveal',revealTarget:['roll','result'].includes(step.kind),showDice:['roll','result'].includes(step.kind),hideOwnOthers:playback.textReplay,loser,winner};
@@ -799,11 +802,11 @@ function buildMatchReplay(saved) {
           const sacrifice=b.sacrifice.length?weakestSacrifice(b):-1;
           loser=sacrifice>=0?{owner:b.defender,row:b.sacrifice[sacrifice].row,index:b.sacrifice[sacrifice].index}:target;
           winner=source;
-          narration=sacrifice>=0?`${opponent}’s Queen survives; ${cardTitle(b.sacrifice[sacrifice].id)} falls instead.`:`${actor} defeats ${opponent}’s ${cardTitle(b.defendCard)}!`;
+          narration=sacrifice>=0?royalSacrificeSentence(opponent,b.defendCard,b.sacrifice[sacrifice].id):`${actor} defeats ${opponent}’s ${cardTitle(b.defendCard)}!`;
         } else if(b.result==='defend'){
           const sacrifice=b.sacrifice.length?b.sacrifice[weakestSacrifice(b)]:null;
           loser=sacrifice?{owner:attacker,row:sacrifice.row,index:sacrifice.index}:source;winner=target;
-          narration=sacrifice?`${actor}’s Queen survives; ${cardTitle(sacrifice.id)} falls instead.`:`${opponent}’s ${cardTitle(b.defendCard)} defeats ${actor}’s ${cardTitle(b.attackCard)}!`;
+          narration=sacrifice?royalSacrificeSentence(actor,b.attackCard,sacrifice.id):`${opponent}’s ${cardTitle(b.defendCard)} defeats ${actor}’s ${cardTitle(b.attackCard)}!`;
         }
         const resultVisual=battleVisual('result',source,target,attacker);
         resultVisual.loser=loser;resultVisual.winner=winner;
@@ -1088,7 +1091,7 @@ function chooseAIAttack() {
       let score=0;
       for(const [r,probability] of guesses) {
         const imagined=`${t.enemy}-${r}`;
-        const attackCount=1+(value(id)>value(imagined)?1:0)+(rank(id)==='10'&&t.row==='front'?1:0)+(rank(id)==='Q'&&queenNeighbor(self,sourceRow,index).length?1:0);
+        const attackCount=1+(value(id)>value(imagined)?1:0)+(rank(id)==='10'&&t.row==='front'?1:0)+(rank(id)==='Q'&&adjacentPeasants(self,sourceRow,index).length?1:0);
         const defendCount=1+(value(imagined)>value(id)?1:0);
         const ordinary=diceOdds(attackCount,defendCount);
         const guarded=r==='Q'&&game.queenRule!=='cedric'?diceOdds(attackCount,defendCount+1):ordinary;
@@ -1162,7 +1165,7 @@ function attack(targetPlayer,row,index) {
   const attackDice=roll(a), defendDice=roll(d);
   let result=Math.max(...attackDice)>Math.max(...defendDice)?'attack':Math.max(...attackDice)<Math.max(...defendDice)?'defend':'tie';
   if (result==='defend' && rank(attackCard)==='A') result='tie';
-  const sacrifice=result==='attack' && game.queenRule!=='cedric' && rank(defendCard)==='Q' ? queenNeighbor(player(targetPlayer),row,index) : result==='defend' && game.queenRule==='cedric' && rank(attackCard)==='Q' ? queenNeighbor(player(game.turn),sourceSlot.row,sourceSlot.index) : [];
+  const sacrifice=result==='attack' && (rank(defendCard)==='K'||game.queenRule!=='cedric' && rank(defendCard)==='Q') ? adjacentPeasants(player(targetPlayer),row,index) : result==='defend' && game.queenRule==='cedric' && rank(attackCard)==='Q' ? adjacentPeasants(player(game.turn),sourceSlot.row,sourceSlot.index) : [];
   if(game.mode==='text') {
     const chosen=sacrifice.length?sacrifice[weakestSacrifice({sacrifice})]:null;
     game.currentBattles.push({actor:game.turn,defender:targetPlayer,source:sourceSlot,target:{row,index},attackCard,defendCard,attackDice,defendDice,result,sacrifice:chosen?{row:chosen.row,index:chosen.index}:null,beforeActor:[...player(game.turn).front,...player(game.turn).back],beforeDefender:[...player(targetPlayer).front,...player(targetPlayer).back]});
