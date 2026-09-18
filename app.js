@@ -13,6 +13,7 @@ let storageError = '';
 let draft = { mode:'solo',count:2, names: ['You','Crimson Court','Iron Court','Ember Court'] };
 let timings = {logic:0,save:0,render:0};
 let backupText='',incomingBackup=null,backupError='';
+let selectedOpponent=null,sheetOpen=false,reserveOpen=false;
 
 try {
   const legacy=localStorage.getItem(KEY);
@@ -27,7 +28,7 @@ try {
 }
 catch { storageError = 'This browser could not read the saved game. Do not clear Safari website data.'; }
 if(location.hash.startsWith('#backup=')) {
-  try { incomingBackup=StateCodec.decode(location.hash.slice(8)); }
+  try { incomingBackup=validateState(StateCodec.decode(location.hash.slice(8))); }
   catch { backupError='This backup link is damaged or uses an unsupported version.'; }
 }
 
@@ -38,6 +39,39 @@ const random = max => {
   return bytes[0] % max;
 };
 function makeSlotId() { return Array.from(crypto.getRandomValues(new Uint8Array(8)),n=>n.toString(16).padStart(2,'0')).join(''); }
+function validateState(saved) {
+  const bad=()=>{throw Error('Invalid match state');};
+  const validIndex=(i,length)=>Number.isInteger(i)&&i>=0&&i<length;
+  const validCard=(id,owner)=>typeof id==='string'&&new RegExp(`^${owner}-(?:A|[2-9]|10|J|Q|K)$`).test(id);
+  if(saved?.version!==1||!['solo','local'].includes(saved.mode)||!Array.isArray(saved.players)||saved.players.length<2||saved.players.length>4)bad();
+  const count=saved.players.length;
+  if(!validIndex(saved.turn,count)||!validIndex(saved.setup,count)||!Number.isInteger(saved.round)||saved.round<1||saved.round>1000000)bad();
+  if(!['setup','buy','arrange','attack','battle','queen','refill','income','victory','stalemate'].includes(saved.phase)||saved.view!=null&&!validIndex(saved.view,count))bad();
+  if(!Number.isInteger(saved.attacks)||saved.attacks>2||saved.attacks<0||!Number.isInteger(saved.kills)||saved.kills<0||saved.kills>2)bad();
+  if(!Array.isArray(saved.refill)||saved.refill.length>count||new Set(saved.refill).size!==saved.refill.length||saved.refill.some(i=>!validIndex(i,count)))bad();
+  if(!Number.isInteger(saved.refillIndex)||saved.refillIndex<0||saved.refillIndex>saved.refill.length||saved.phase==='refill'&&saved.refillIndex>=saved.refill.length)bad();
+  if(typeof saved.message!=='string'||saved.message.length>2048||!Array.isArray(saved.log)||saved.log.length>1000||saved.log.some(s=>typeof s!=='string'||s.length>2048))bad();
+  saved.players.forEach((p,i)=>{
+    if(p?.suit!==i||typeof p.name!=='string'||p.name.length>128||typeof p.alive!=='boolean'||typeof p.cpu!=='boolean'||!Number.isInteger(p.coins)||p.coins<0||p.coins>10000)bad();
+    if(!Array.isArray(p.front)||p.front.length!==3||!Array.isArray(p.back)||p.back.length!==3||!Array.isArray(p.reserve)||!Array.isArray(p.deck))bad();
+    const cards=[...p.front,...p.back,...p.reserve,...p.deck].filter(id=>id!=null);
+    if(cards.length>13||new Set(cards).size!==cards.length||cards.some(id=>!validCard(id,i)))bad();
+  });
+  if(saved.selection!=null){
+    const s=saved.selection,owner=saved.phase==='setup'?saved.setup:saved.phase==='refill'?saved.refill[saved.refillIndex]:saved.turn;
+    if(!['front','back','reserve'].includes(s.location)||!validIndex(s.index,s.location==='reserve'?saved.players[owner]?.reserve.length:3))bad();
+  }
+  if(['battle','queen'].includes(saved.phase)!==Boolean(saved.pending))bad();
+  if(saved.pending){
+    const b=saved.pending;
+    if(!validIndex(b.defender,count)||b.defender===saved.turn||!validIndex(b.source?.index,3)||!['front','back'].includes(b.source?.row)||!validIndex(b.target?.index,3)||!['front','back'].includes(b.target?.row)||b.target.player!==b.defender)bad();
+    if(!validCard(b.attackCard,saved.turn)||!validCard(b.defendCard,b.defender)||!['tie','attack','defend'].includes(b.result))bad();
+    if(!Array.isArray(b.attackDice)||!Array.isArray(b.defendDice)||[b.attackDice,b.defendDice].some(d=>d.length<1||d.length>3||d.some(n=>!Number.isInteger(n)||n<1||n>6)))bad();
+    if(!Array.isArray(b.sacrifice)||b.sacrifice.length>2||b.sacrifice.some(s=>!['front','back'].includes(s.row)||!validIndex(s.index,3)||!validCard(s.id,b.defender)))bad();
+    if(saved.players[saved.turn][b.source.row][b.source.index]!==b.attackCard||saved.players[b.defender][b.target.row][b.target.index]!==b.defendCard)bad();
+  }
+  return saved;
+}
 function readSlot(id) {
   const raw=localStorage.getItem(SLOT_PREFIX+id);
   if(!raw) return null;
@@ -45,7 +79,7 @@ function readSlot(id) {
   if(saved.version!==1)throw Error('Unsupported match version');
   saved.log??=[]; saved.mode??='local';
   for(const p of saved.players)p.cpu??=false;
-  return saved;
+  return validateState(saved);
 }
 function gameSlots() {
   const slots=[];
@@ -116,18 +150,19 @@ function advanceTurn() {
   if (next <= game.turn) game.round++;
   game.turn = next; game.phase = 'buy'; game.view = null; game.selection = null;
   game.attacks = 0; game.kills = 0; game.pending = null;
-  game.message = `${player(next).name}'s turn. Pass the phone to them.`;
+  game.message = game.mode==='solo'?'Your turn. Buy cards or arrange your line.':`${player(next).name}'s turn. Pass the phone to them.`;
 }
 function cardHTML(id, action, location, index, opts={}) {
   const selected = game?.selection && game.selection.location === location && game.selection.index === index;
   const attrs = action ? `data-action="${action}" data-location="${location}" data-index="${index}"` : 'disabled';
-  if (!id) return `<button class="card empty" ${attrs} aria-label="Empty slot">+</button>`;
-  if (opts.hidden) return `<button class="card back ${opts.target?'target':''}" ${attrs} aria-label="Face-down card"><span class="center">♛</span></button>`;
-  return `<button class="card ${['♥','♦'].includes(suit(id))?'red':''} ${selected?'selected':''}" ${attrs} aria-label="${label(id)}"><span class="rank">${rank(id)}<small>${suit(id)}</small></span><span class="center">${suit(id)}</span><span class="rank foot">${rank(id)}<small>${suit(id)}</small></span></button>`;
+  const place=opts.owner!=null?`${player(opts.owner).name}, ${opts.row} slot ${index+1}, `:'';
+  if (!id) return `<button class="card empty" ${attrs} aria-label="${escapeHTML(place)}empty slot">+</button>`;
+  if (opts.hidden) return `<button class="card back ${opts.target?'target':''}" ${attrs} aria-label="${escapeHTML(place)}face-down card"><span class="center">♛</span></button>`;
+  return `<button class="card ${['♥','♦'].includes(suit(id))?'red':''} ${selected?'selected':''}" ${attrs} aria-label="${escapeHTML(place)}${label(id)}"><span class="rank">${rank(id)}<small>${suit(id)}</small></span><span class="center">${suit(id)}</span><span class="rank foot">${rank(id)}<small>${suit(id)}</small></span></button>`;
 }
 function lineHTML(cards, action, location, hidden=false) { return `<div class="line">${cards.map((id,i) => cardHTML(id,action,location,i,{hidden})).join('')}</div>`; }
-function frame(content) {
-  app.innerHTML = `<main class="app"><header class="top"><div><div class="brand">♛ Regicidious</div><div class="tag">The pocket battlefield</div></div><button class="pill" data-action="games">Games</button></header>${storageError ? `<div class="status" role="alert">${storageError}</div>` : ''}${backupError ? `<div class="status" role="alert">${backupError}</div>` : ''}${content}${game?.mode==='solo'&&!hubOpen&&!incomingBackup?`<section class="panel"><h3>Keep a backup</h3><p class="muted small">A backup link contains the whole match, including hidden cards. Keep it private.</p><button class="button secondary wide" data-action="backup">Copy backup link</button>${backupText?`<label class="field" style="margin-top:12px"><span>Backup link · copy this if clipboard access is unavailable</span><textarea readonly rows="3">${escapeHTML(backupText)}</textarea></label>`:''}</section>`:''}<p class="notice">Created by Shane Holmgren · Digital adaptation: Regicidious<br>Saved on this device after every move. Keep Safari website data to keep your game.<br><span class="perf">Last move: logic ${timings.logic} µs · save ${timings.save} µs · UI ${timings.render} µs</span></p></main>`;
+function frame(content,compact=false) {
+  app.innerHTML = `<main class="app ${compact?'compact-app':''}"><header class="top ${compact?'compact-top':''}"><div class="brand">♛ Regicidious</div><div class="top-actions">${compact?`<button class="pill" data-action="toggle-sheet" aria-label="Game details">☰</button>`:''}<button class="pill" data-action="games">Games</button></div></header>${storageError ? `<div class="status" role="alert">${storageError}</div>` : ''}${backupError ? `<div class="status" role="alert">${backupError}</div>` : ''}${content}${!compact&&game?.mode==='solo'&&!hubOpen&&!incomingBackup?`<section class="panel"><h3>Keep a backup</h3><p class="muted small">A backup link contains the whole match, including hidden cards. Keep it private.</p><button class="button secondary wide" data-action="backup">Copy backup link</button>${backupText?`<label class="field" style="margin-top:12px"><span>Backup link · copy this if clipboard access is unavailable</span><textarea readonly rows="3">${escapeHTML(backupText)}</textarea></label>`:''}</section>`:''}${compact?'':`<p class="notice">Created by Shane Holmgren · Digital adaptation: Regicidious<br>Saved on this device after every move. Keep Safari website data to keep your game.<br><span class="perf">Last move: logic ${timings.logic} µs · save ${timings.save} µs · UI ${timings.render} µs</span></p>`}</main>`;
 }
 function renderHub() {
   const slots=gameSlots();
@@ -138,7 +173,7 @@ function renderImport() {
   frame(`<section class="panel"><div class="phase">Backup link</div><h2>Add this match?</h2><p class="muted">${escapeHTML(p.name)} · round ${incomingBackup.round} · ${incomingBackup.players.length} players</p><p class="small">Restoring adds another saved game. Your current games remain untouched.</p><div class="actions"><button class="button" data-action="restore-backup">Add backup</button><button class="button secondary" data-action="keep-current">Keep current games</button></div></section>`);
 }
 function renderStart() {
-  frame(`<section class="hero"><div class="crown">♛</div><h1>Regicidious</h1><p>A tiny kingdom, a dangerous front line, and two attacks to make your mark.</p></section><section class="panel"><h2>Choose your battlefield</h2><p class="muted small">Play computer courts or pass one phone around. No account or network needed after the first load.</p><div class="label">Mode</div><div class="actions"><button class="button ${draft.mode==='solo'?'':'ghost'}" data-action="mode" data-value="solo">Solo vs computer</button><button class="button ${draft.mode==='local'?'':'ghost'}" data-action="mode" data-value="local">Pass & play</button></div><div class="label">${draft.mode==='solo'?'Computer opponents':'Players'}</div><div class="actions">${[2,3,4].map(n => `<button class="button ${draft.count===n?'':'ghost'}" data-action="count" data-value="${n}">${draft.mode==='solo'?n-1:n}</button>`).join('')}</div><div class="stack" style="margin-top:18px">${draft.names.slice(0,draft.mode==='solo'?1:draft.count).map((name,i) => `<label class="field"><span>${SUITS[i]} ${draft.mode==='solo'?'Your name':NAMES[i]}</span><input data-name="${i}" maxlength="24" value="${escapeHTML(name)}" autocomplete="off"></label>`).join('')}</div><div class="actions"><button class="button wide" data-action="start">Begin the war →</button></div></section><details class="panel"><summary>How this version plays</summary><ul class="rule-list"><li>Arrange six cards, then take turns buying, rearranging, and attacking up to twice.</li><li>Tap your attacker, then a face-down enemy card. Only a 10 can reach the back line.</li><li>Highest single die wins. Ties spare both cards. Defeated cards return to the owner’s shuffled pile.</li><li>A surviving Jack earns one coin; each enemy card defeated earns one more. Cards cost two coins.</li><li>Civ bonuses are not included yet.</li></ul></details>`);
+  frame(`<section class="hero"><div class="crown">♛</div><h1>Regicidious</h1><p>A tiny kingdom, a dangerous front line, and two attacks to make your mark.</p></section><section class="panel"><h2>Choose your battlefield</h2><p class="muted small">Play computer courts or pass one phone around. No account or network needed after the first load.</p><div class="label">Mode</div><div class="actions"><button class="button ${draft.mode==='solo'?'':'ghost'}" data-action="mode" data-value="solo">Solo vs computer</button><button class="button ${draft.mode==='local'?'':'ghost'}" data-action="mode" data-value="local">Pass & play</button></div><div class="label">${draft.mode==='solo'?'Computer opponents':'Players'}</div><div class="actions">${[2,3,4].map(n => `<button class="button ${draft.count===n?'':'ghost'}" data-action="count" data-value="${n}">${draft.mode==='solo'?n-1:n}</button>`).join('')}</div><div class="stack" style="margin-top:18px">${draft.names.slice(0,draft.mode==='solo'?1:draft.count).map((name,i) => `<label class="field"><span>${SUITS[i]} ${draft.mode==='solo'?'Your name':NAMES[i]}</span><input data-name="${i}" maxlength="24" value="${escapeHTML(name)}" autocomplete="off"></label>`).join('')}</div><div class="actions"><button class="button wide" data-action="start">Begin the war →</button></div></section><details class="panel"><summary>How this version plays</summary><ul class="rule-list"><li>Arrange six cards, then take turns buying, rearranging, and attacking up to twice.</li><li>Tap your front-line attacker or a back-line Knight, then an enemy card. A front-line Knight can reach the enemy back line; a back-line Knight can attack only the enemy front.</li><li>Highest single die wins. Ties spare both cards. Defeated cards return to the owner’s shuffled pile.</li><li>A surviving Jack earns one coin; each enemy card defeated earns one more. Cards cost two coins.</li><li>Civ bonuses are not included yet.</li></ul></details>`);
 }
 function renderVeil() {
   const index = game.phase === 'setup' ? game.setup : game.phase === 'refill' ? game.refill[game.refillIndex] : game.phase === 'queen' ? game.pending.defender : game.turn;
@@ -154,9 +189,43 @@ function renderBoard(index, mode) {
 function renderOpponents() {
   return game.players.map((p,i) => i === game.turn || !p.alive ? '' : `<section class="opponent"><div class="board-title"><h3>${escapeHTML(p.name)} ${SUITS[i]}</h3><span class="pill">${p.front.filter(Boolean).length+p.back.filter(Boolean).length} in play</span></div><div class="label">Back line</div>${lineHTML(p.back,'target',`${i}:back`,true)}<div class="label">Front line</div>${lineHTML(p.front,'target',`${i}:front`,true)}</section>`).join('');
 }
+function arenaRow(owner,row,own,mode) {
+  const p=player(owner);
+  const cards=p[row].map((id,index)=>{
+    let action='';
+    if(own && ['setup','arrange','refill'].includes(mode))action='slot';
+    if(own && mode==='attack' && id && (row==='front'||rank(id)==='10'))action='attacker';
+    if(!own && mode==='attack' && id)action='target';
+    const reveal=!own && mode==='battle' && game.pending?.defender===owner && game.pending.target.row===row && game.pending.target.index===index;
+    return cardHTML(id,action,own?row:`${owner}:${row}`,index,{hidden:!own&&!reveal,owner,row,target:reveal});
+  });
+  return `<div class="arena-row"><span class="arena-label">${row==='front'?'Front line':'Back line'}</span><div class="line">${cards.join('')}</div></div>`;
+}
+function arenaDetails() {
+  if(!sheetOpen)return '';
+  return `<div class="sheet-scrim" data-action="toggle-sheet"></div><section class="arena-sheet" role="dialog" aria-label="Game details"><div class="row"><h3>Game details</h3><button class="button ghost" data-action="toggle-sheet">Close</button></div><p class="muted small">Round ${game.round} · ${escapeHTML(player(game.turn).name)} · ${escapeHTML(game.phase)}</p><p class="small">${escapeHTML(game.message||'Tap a card to select it. The highest individual die wins.')}</p>${game.log?.length?`<div class="small muted">${game.log.slice(-6).reverse().map(item=>`<p>${escapeHTML(item)}</p>`).join('')}</div>`:''}${game.mode==='solo'?`<button class="button secondary wide" data-action="backup">Copy backup link</button>${backupText?`<textarea readonly rows="3">${escapeHTML(backupText)}</textarea>`:''}`:''}<p class="small muted">Created by Shane Holmgren. Last move: logic ${timings.logic} µs · save ${timings.save} µs · UI ${timings.render} µs.</p></section>`;
+}
+function arenaReserve(owner) {
+  const p=player(owner);
+  if(!p.reserve.length||!['setup','arrange'].includes(game.phase))return '';
+  return `<button class="reserve-trigger" data-action="reserve">Reserve ${p.reserve.length} ▴</button>${reserveOpen?`<div class="reserve-overlay"><div class="row"><strong>Reserve cards</strong><button class="button ghost" data-action="reserve">Close</button></div><p class="small muted">Select a card, then tap a board slot.</p><div class="reserve">${p.reserve.map((id,i)=>cardHTML(id,'slot','reserve',i,{owner,row:'reserve'})).join('')}</div></div>`:''}`;
+}
+function renderArena(owner,mode,intro,controls) {
+  const candidates=living().filter(i=>i!==owner);
+  const opponent=mode==='battle'&&game.pending?.defender!==owner?game.pending.defender:(candidates.includes(selectedOpponent)?selectedOpponent:candidates[0]);
+  selectedOpponent=opponent;
+  const target=opponent==null?null:player(opponent);
+  const chips=mode==='battle'?'':candidates.length>1?`<div class="opponent-chips">${candidates.map(i=>`<button class="opponent-chip ${i===opponent?'active':''}" data-action="opponent" data-index="${i}">${SUITS[i]} ${escapeHTML(player(i).name)}</button>`).join('')}</div>`:'';
+  let middle=`<div class="arena-instruction">${escapeHTML(mode==='refill'?intro:game.message||intro)}</div>`;
+  if(mode==='battle') {
+    const b=game.pending;
+    middle=`<div class="clash-dice" data-dice-lane aria-live="off"><div class="clash-side"><span>${label(b.defendCard)}</span><div class="dice">${b.defendDice.map(()=>`<span class="die">?</span>`).join('')}</div></div><span class="clash-versus">vs</span><div class="clash-side"><span>${label(b.attackCard)}</span><div class="dice">${b.attackDice.map(()=>`<span class="die">?</span>`).join('')}</div></div></div>`;
+  }
+  const own=player(owner);
+  frame(`<section class="arena" aria-label="Battlefield"><div class="arena-opponent"><div class="arena-hud"><strong>${target?`${escapeHTML(target.name)} ${SUITS[opponent]}`:'Your opponent'}</strong><span>${target?`${target.front.filter(Boolean).length+target.back.filter(Boolean).length} cards`:''}</span></div>${chips}${target?arenaRow(opponent,'back',false,mode):''}${target?arenaRow(opponent,'front',false,mode):''}</div><div class="arena-middle">${middle}</div><div class="arena-self"><div class="arena-hud"><strong>${escapeHTML(own.name)} ${SUITS[owner]}</strong><span>◉ ${own.coins} · ${game.attacks}/2 attacks</span></div>${arenaRow(owner,'front',true,mode)}${arenaRow(owner,'back',true,mode)}${arenaReserve(owner)}</div><div class="arena-dock">${controls}</div></section>${arenaDetails()}`,true);
+}
 function renderPlay() {
   const p = player(game.turn);
-  const phaseText = {buy:'Buy cards',arrange:'Arrange your line',attack:'Attack',income:'Record income'}[game.phase];
   let intro = '';
   let controls = '';
   if (game.phase === 'buy') {
@@ -166,19 +235,19 @@ function renderPlay() {
     intro = `Tap two cards or an empty slot to move or swap. Front and back hold three each. Once you attack, your layout is locked for this turn.`;
     controls = `<button class="button wide" data-action="next">Attack →</button>`;
   } else if (game.phase === 'attack') {
-    intro = `Attack ${game.attacks+1} of 2. Select one of your front-line cards, then an enemy front-line card. A 10 may also target the back line.`;
+    intro = `Attack ${game.attacks+1}/2: tap your front card or back-line Knight, then an enemy card.`;
     controls = `<button class="button secondary wide" data-action="finish-attacks">${game.attacks ? 'Finish attacks' : 'Skip attacks'} →</button>`;
   } else {
     const jack = hasCard(p,'J') ? 1 : 0;
     intro = `${game.kills} defeated ${game.kills===1?'card':'cards'} + ${jack} Jack bonus = ${game.kills+jack} ${game.kills+jack===1?'coin':'coins'}.`;
     controls = `<button class="button wide" data-action="income">Collect ${game.kills+jack} ◉ and end turn →</button>`;
   }
-  frame(`<div class="phase">${phaseText}</div><div class="status">${escapeHTML(game.message || intro)}</div>${renderBoard(game.turn,game.phase)}${game.phase==='attack'?renderOpponents():''}<div class="actions">${controls}</div>${game.log?.length?`<section class="panel"><h3>Recent battles</h3><div class="small muted">${game.log.slice(-8).reverse().map(item=>`<p>${escapeHTML(item)}</p>`).join('')}</div></section>`:''}`);
+  renderArena(game.turn,game.phase,intro,controls);
 }
 function renderRefill() {
   const index = game.refill[game.refillIndex], p = player(index);
   const gaps = p.front.filter(id => !id).length;
-  frame(`<div class="phase">Restore the front line</div><div class="status">${gaps ? `Move ${Math.min(gaps,p.back.filter(Boolean).length)} card(s) forward from the back line. Tap a card, then an empty front slot.` : 'Your front line is ready.'}</div>${renderBoard(index,'refill')}<div class="actions"><button class="button wide" data-action="refill-done" ${gaps && p.back.some(Boolean)?'disabled':''}>Done →</button></div>`);
+  renderArena(index,'refill',gaps?`Fill ${Math.min(gaps,p.back.filter(Boolean).length)} front gap: tap a back card, then the empty front slot.`:'Front line ready.',`<button class="button wide" data-action="refill-done" ${gaps && p.back.some(Boolean)?'disabled':''}>${gaps?'Fill front gap first':'Done →'}</button>`);
 }
 function queenNeighbor(p, row, index) {
   return [index-1,index+1].filter(i => i>=0 && i<3 && isPeasant(p[row][i] || '')).map(i => ({row,index:i,id:p[row][i]}));
@@ -196,8 +265,32 @@ function roll(count) { return Array.from({length:count}, () => random(6)+1); }
 function renderBattle() {
   const b = game.pending;
   const outcome = b.result === 'tie' ? 'A draw. Both survive.' : b.result === 'attack' ? `${player(b.defender).name} loses ${label(b.defendCard)}.` : `${player(game.turn).name} loses ${label(b.attackCard)}.`;
-  const dice = values => `<div class="dice">${values.map(n => `<span class="die">${n}</span>`).join('')}</div>`;
-  frame(`<div class="phase">The clash</div><section class="panel"><h2>${escapeHTML(outcome)}</h2><div class="battle"><div><strong>${escapeHTML(player(game.turn).name)} · ${label(b.attackCard)}</strong>${dice(b.attackDice)}</div><div><strong>${escapeHTML(player(b.defender).name)} · ${label(b.defendCard)}</strong>${dice(b.defendDice)}</div></div>${b.result==='attack'&&b.sacrifice ? `<p class="muted small">The Queen can sacrifice an adjacent peasant instead.</p>` : ''}<div class="actions"><button class="button wide" data-action="battle-next">${b.result==='attack'&&b.sacrifice?'Pass to defender →':'Continue →'}</button></div></section>`);
+  renderArena(game.turn,'battle',outcome,`<div class="battle-result" aria-live="polite" hidden>${escapeHTML(outcome)}</div><button class="button" data-action="battle-next" disabled>${b.result==='attack'&&b.sacrifice.length?'Pass to defender →':'Continue →'}</button>`);
+  animateDice(b);
+}
+function animateDice(b) {
+  const lane=app.querySelector('[data-dice-lane]');
+  if(!lane)return;
+  const faces=[...lane.querySelectorAll('.die')],numbers=[...b.defendDice,...b.attackDice];
+  const finish=()=>{
+    if(!lane.isConnected)return;
+    faces.forEach((face,i)=>{face.textContent=numbers[i];});
+    lane.setAttribute('aria-live','polite');
+    const result=app.querySelector('.battle-result'),button=app.querySelector('[data-action="battle-next"]');
+    if(result)result.hidden=false;
+    if(button)button.disabled=false;
+    try { navigator.vibrate?.(18); } catch { /* iOS may not support vibration. */ }
+  };
+  if(window.matchMedia?.('(prefers-reduced-motion: reduce)').matches){finish();return;}
+  const delays=[65,80,105,135,165];
+  let step=0;
+  const cycle=()=>{
+    if(!lane.isConnected)return;
+    faces.forEach(face=>{face.textContent=random(6)+1;});
+    if(step<delays.length)setTimeout(cycle,delays[step++]);
+    else finish();
+  };
+  cycle();
 }
 function renderQueen() {
   const b = game.pending, p = player(b.defender);
@@ -205,16 +298,20 @@ function renderQueen() {
 }
 function renderVictory() {
   const winner = player(living()[0]);
-  frame(`<section class="hero"><div class="crown">♛</div><div class="phase">The kingdom stands</div><h1>${escapeHTML(winner.name)} wins.</h1><p>${SUITS[winner.suit]} ${NAMES[winner.suit]} is the last kingdom standing. This finished game remains saved on this device.</p></section><section class="panel"><h2>Another game?</h2><p class="muted small">Starting a new game replaces this finished game on this device.</p><button class="button secondary wide" data-action="new-after-win">New game</button></section>`);
+  frame(`<section class="hero"><div class="crown">♛</div><div class="phase">The kingdom stands</div><h1>${escapeHTML(winner.name)} wins.</h1><p>${SUITS[winner.suit]} ${NAMES[winner.suit]} is the last kingdom standing. This finished game remains saved on this device.</p></section><section class="panel"><h2>Another game?</h2><p class="muted small">Starting another game leaves this one in your Games list.</p><button class="button secondary wide" data-action="new-after-win">New game</button></section>`);
+}
+function renderStalemate() {
+  frame(`<section class="hero"><div class="crown">♛</div><h1>No winner yet.</h1><p>This match reached the computer-play safety limit. Its full state is saved in your Games list.</p></section><section class="panel"><button class="button secondary wide" data-action="new-game">Start another game</button></section>`);
 }
 function render() {
   if(incomingBackup) return renderImport();
   if(hubOpen) return renderHub();
   if (!game) return renderStart();
   if (game.phase === 'victory') return renderVictory();
+  if (game.phase === 'stalemate') return renderStalemate();
   if (game.view === null) return renderVeil();
   if (game.phase === 'setup') {
-    frame(`<div class="phase">Starting formation · ${game.setup+1} of ${game.players.length}</div><div class="status">${escapeHTML(game.message || `Only ${player(game.setup).name} should look. Tap two cards to swap their positions. Start with at least as many cards in front as behind.`)}</div>${renderBoard(game.setup,'setup')}<div class="actions"><button class="button wide" data-action="setup-done">Lock formation →</button></div>`);
+    renderArena(game.setup,'setup',game.message || 'Tap two of your cards to swap. Keep at least as many in front as behind.',`<button class="button wide" data-action="setup-done">Lock formation →</button>`);
   } else if (game.phase === 'refill') renderRefill();
   else if (game.phase === 'queen') renderQueen();
   else if (game.phase === 'battle') renderBattle();
@@ -249,6 +346,7 @@ function finishAttacks() {
   for(const i of game.refill.filter(i=>player(i).cpu)) refillAI(player(i));
   game.refill=game.refill.filter(i=>!player(i).cpu);
   game.refillIndex=0; game.selection=null;
+  game.message='';
   if (game.refill.length) { game.phase='refill'; game.view=null; }
   else { game.phase='income'; game.message=''; }
 }
@@ -274,7 +372,7 @@ function resolveBattle(sacrificeIndex=-1) {
   game.pending=null; game.selection=null;
   if (living().length<=1) { game.phase='victory'; game.view=null; return; }
   game.phase='attack'; game.view=player(game.turn).cpu?null:game.turn; game.message=`${game.attacks} of 2 attacks used. ${game.attacks<2?'You may attack again or finish.':''}`;
-  if (game.attacks>=2 || !player(game.turn).front.some(Boolean)) finishAttacks();
+  if (game.attacks>=2 || !player(game.turn).front.some(Boolean) && !player(game.turn).back.some(id=>id&&rank(id)==='10')) finishAttacks();
 }
 
 function cardPriority(id) {
@@ -284,6 +382,7 @@ function cardPriority(id) {
 function arrangeAI(p) {
   const cards=[...p.front,...p.back,...p.reserve].filter(Boolean);
   const king=cards.find(id=>rank(id)==='K');
+  if(king && cards.length===1){p.front=[king,null,null];p.back=[null,null,null];p.reserve=[];return;}
   const queen=cards.find(id=>rank(id)==='Q');
   let front=[];
   if (queen) {
@@ -312,16 +411,16 @@ function chooseAIAttack() {
     for(const row of ['front','back']) for(let index=0;index<3;index++) if(player(enemy)[row][index]) targets.push({enemy,row,index});
   }
   const choices=[];
-  for(let index=0;index<3;index++) {
-    const id=self.front[index]; if(!id) continue;
+  for(const sourceRow of ['front','back']) for(let index=0;index<3;index++) {
+    const id=self[sourceRow][index]; if(!id || sourceRow==='back' && rank(id)!=='10') continue;
     for(const t of targets) {
-      if(t.row==='back' && rank(id)!=='10') continue;
+      if(t.row==='back' && (rank(id)!=='10' || sourceRow==='back')) continue;
       // Evaluate a probability model for a face-down card, never its actual rank.
       const guesses=t.row==='back'?[['K',.48],['Q',.12],['J',.12],['10',.08],['8',.2]]:[['Q',.23],['J',.18],['10',.14],['A',.12],['8',.33]];
       let score=0;
       for(const [r,probability] of guesses) {
         const imagined=`${t.enemy}-${r}`;
-        const attackCount=1+(value(id)>value(imagined)?1:0)+(rank(id)==='10'&&t.row==='front'?1:0)+(rank(id)==='Q'&&queenNeighbor(self,'front',index).length?1:0);
+        const attackCount=1+(value(id)>value(imagined)?1:0)+(rank(id)==='10'&&t.row==='front'?1:0)+(rank(id)==='Q'&&queenNeighbor(self,sourceRow,index).length?1:0);
         const defendCount=1+(value(imagined)>value(id)?1:0);
         const ordinary=diceOdds(attackCount,defendCount);
         const guarded=r==='Q'?diceOdds(attackCount,defendCount+1):ordinary;
@@ -332,7 +431,7 @@ function chooseAIAttack() {
       }
       if(t.row==='front' && player(t.enemy).front.filter(Boolean).length===1) score+=.15;
       score+=(random(1000)/1000)*.025;
-      choices.push({index,...t,score});
+      choices.push({sourceRow,sourceIndex:index,...t,score});
     }
   }
   return choices.sort((a,b)=>b.score-a.score)[0];
@@ -349,8 +448,10 @@ function computeDiceOdds(a,d) {
 }
 const ODDS=Array.from({length:4},(_,a)=>Array.from({length:4},(_,d)=>a&&d?computeDiceOdds(a,d):null));
 function diceOdds(a,d) { return ODDS[a][d]; }
-function runAI() {
+function runAI(maxSteps=2000) {
+  let steps=0;
   while(game.phase!=='victory' && player(game.turn).cpu) {
+    if(++steps>maxSteps) { game.phase='stalemate';game.message='Computer-play safety limit reached.';return; }
     const p=player(game.turn);
     if(game.phase==='buy') {
       while(p.coins>=2 && p.deck.length && p.reserve.length<3) { p.coins-=2; p.reserve.push(drawCard(p)); }
@@ -359,10 +460,10 @@ function runAI() {
     else if(game.phase==='attack') {
       const choice=game.attacks<2 && chooseAIAttack();
       if(!choice) { finishAttacks(); continue; }
-      game.selection={location:'front',index:choice.index};
+      game.selection={location:choice.sourceRow,index:choice.sourceIndex};
       attack(choice.enemy,choice.row,choice.index);
     } else if(game.phase==='battle') {
-      if(game.pending.sacrifice.length && game.pending.defender===0) { game.phase='queen'; game.view=null; return; }
+      if(game.pending.sacrifice.length && !player(game.pending.defender).cpu) { game.phase='queen'; game.view=null; return; }
       const sacrifice=game.pending.sacrifice.length ? game.pending.sacrifice.reduce((best,s,i,a)=>value(s.id)<value(a[best].id)?i:best,0) : -1;
       resolveBattle(sacrifice);
     } else if(game.phase==='refill') {
@@ -377,11 +478,12 @@ function runAI() {
 }
 function attack(targetPlayer,row,index) {
   const source=game.selection;
-  if (!source || source.location!=='front' || !player(game.turn).front[source.index]) return;
+  if (!source || !['front','back'].includes(source.location) || !player(game.turn)[source.location][source.index]) return;
   if (targetPlayer===game.turn || !player(targetPlayer)?.alive || !player(targetPlayer)[row]?.[index]) return;
-  const attackCard=player(game.turn).front[source.index], defendCard=player(targetPlayer)[row][index];
+  const attackCard=player(game.turn)[source.location][source.index], defendCard=player(targetPlayer)[row][index];
+  if(source.location==='back' && (rank(attackCard)!=='10' || row!=='front')) { game.message='A back-line Knight can attack only the enemy front line.'; return; }
   if (row==='back' && rank(attackCard)!=='10') { game.message='Only a Knight (10) can attack the back line.'; return; }
-  const sourceSlot={row:'front',index:source.index}, target={player:targetPlayer,row,index};
+  const sourceSlot={row:source.location,index:source.index}, target={player:targetPlayer,row,index};
   const [a,d]=diceCount(attackCard,defendCard,sourceSlot,target);
   const attackDice=roll(a), defendDice=roll(d);
   let result=Math.max(...attackDice)>Math.max(...defendDice)?'attack':Math.max(...attackDice)<Math.max(...defendDice)?'defend':'tie';
@@ -402,10 +504,13 @@ app.addEventListener('click', event => {
     navigator.clipboard?.writeText(backupText).catch(()=>{});
     render(); return;
   }
-  if(action==='games') { hubOpen=true;backupText='';render();return; }
-  if(action==='new-game' || action==='new-after-win') { game=null;slotId=null;hubOpen=false;backupText='';render();return; }
+  if(action==='toggle-sheet') { sheetOpen=!sheetOpen;render();return; }
+  if(action==='reserve') { reserveOpen=!reserveOpen;render();return; }
+  if(action==='opponent') { selectedOpponent=index;render();return; }
+  if(action==='games') { hubOpen=true;sheetOpen=false;reserveOpen=false;backupText='';render();return; }
+  if(action==='new-game' || action==='new-after-win') { game=null;slotId=null;hubOpen=false;sheetOpen=false;reserveOpen=false;backupText='';render();return; }
   if(action==='open-game') {
-    try { const chosen=readSlot(button.dataset.id);if(!chosen)throw Error('Missing match');game=chosen;slotId=button.dataset.id;hubOpen=false;backupText='';localStorage.setItem(ACTIVE_KEY,slotId);storageError='';render(); }
+    try { const chosen=readSlot(button.dataset.id);if(!chosen)throw Error('Missing match');game=chosen;slotId=button.dataset.id;hubOpen=false;sheetOpen=false;reserveOpen=false;backupText='';localStorage.setItem(ACTIVE_KEY,slotId);storageError='';render(); }
     catch(error) { storageError='This game could not be opened. Its saved data was not changed.';render();console.error(error); }
     return;
   }
@@ -424,7 +529,7 @@ app.addEventListener('click', event => {
     if (action==='reveal') { game.view=game.phase==='setup'?game.setup:game.phase==='refill'?game.refill[game.refillIndex]:game.phase==='queen'?game.pending.defender:game.turn; return; }
     if (action==='slot') {
       const owner=game.phase==='setup'?game.setup:game.phase==='refill'?game.refill[game.refillIndex]:game.turn;
-      if (['setup','arrange','refill'].includes(game.phase)) moveSlot(owner,button.dataset.location,index);
+      if (['setup','arrange','refill'].includes(game.phase)) { moveSlot(owner,button.dataset.location,index);if(button.dataset.location==='reserve')reserveOpen=false; }
       return;
     }
     if (action==='setup-done' && game.phase==='setup') {
@@ -441,7 +546,8 @@ app.addEventListener('click', event => {
       game.selection=null; game.message=''; return;
     }
     if (action==='attacker' && game.phase==='attack') {
-      if (button.dataset.location==='front' && player(game.turn).front[index]) game.selection=game.selection?.index===index?null:{location:'front',index};
+      const row=button.dataset.location,id=player(game.turn)[row]?.[index];
+      if (id && (row==='front' || row==='back' && rank(id)==='10')) game.selection=game.selection?.location===row&&game.selection.index===index?null:{location:row,index};
       return;
     }
     if (action==='target' && game.phase==='attack') { const [owner,row]=button.dataset.location.split(':'); attack(Number(owner),row,index); return; }

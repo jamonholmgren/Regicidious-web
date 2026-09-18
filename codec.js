@@ -1,6 +1,6 @@
 /* Versioned binary match format. No JSON is used for new saves or links. */
 const StateCodec = (() => {
-  const phases=['setup','buy','arrange','attack','battle','queen','refill','income','victory'];
+  const phases=['setup','buy','arrange','attack','battle','queen','refill','income','victory','stalemate'];
   const ranks=['A','2','3','4','5','6','7','8','9','10','J','Q','K'];
   const encoder=new TextEncoder(), decoder=new TextDecoder('utf-8',{fatal:true});
   const cardCode=id => id==null?255:Number(id.split('-')[0])*16+ranks.indexOf(id.split('-')[1]);
@@ -27,7 +27,7 @@ const StateCodec = (() => {
     const b=state.pending;
     byte(b?1:0);
     if(b) {
-      byte(b.defender);byte(b.source.index);byte(b.target.row==='back'?1:0);byte(b.target.index);
+      byte(b.defender);byte(b.source.index|(b.source.row==='back'?128:0));byte(b.target.row==='back'?1:0);byte(b.target.index);
       card(b.attackCard);card(b.defendCard);dice(b.attackDice);dice(b.defendDice);
       byte(['tie','attack','defend'].indexOf(b.result));
       byte(b.sacrifice.length);
@@ -43,10 +43,11 @@ const StateCodec = (() => {
     return 'B1.'+btoa(binary).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
   }
   function decode(encoded) {
-    if(!encoded.startsWith('B1.'))throw Error('Unknown match format');
+    if(typeof encoded!=='string'||!encoded.startsWith('B1.'))throw Error('Unknown match format');
+    if(encoded.length>32768)throw Error('Match link too large');
     const value=encoded.slice(3).replace(/-/g,'+').replace(/_/g,'/');
     const data=Uint8Array.from(atob(value),ch=>ch.charCodeAt(0));
-    if(data.length<8)throw Error('Truncated match');
+    if(data.length<8||data.length>24576)throw Error('Invalid match size');
     let check=2166136261;
     for(let i=0;i<data.length-4;i++)check=Math.imul(check^data[i],16777619)>>>0;
     const expected=(data[data.length-4]|data[data.length-3]<<8|data[data.length-2]<<16|data[data.length-1]<<24)>>>0;
@@ -73,7 +74,7 @@ const StateCodec = (() => {
     });
     let pending=null;
     if(byte()) {
-      const defender=byte(),source={row:'front',index:byte()};
+      const defender=byte(),sourceCode=byte(),source={row:sourceCode&128?'back':'front',index:sourceCode&127};
       const target={player:defender,row:byte()?'back':'front',index:byte()};
       const attackCard=card(),defendCard=card(),attackDice=dice(),defendDice=dice();
       const result=['tie','attack','defend'][byte()],sacrificeCount=byte();

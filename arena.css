@@ -1,0 +1,45 @@
+.compact-app{height:100dvh;max-width:680px;overflow:hidden;padding:calc(5px + env(safe-area-inset-top)) 10px calc(5px + env(safe-area-inset-bottom));display:flex;flex-direction:column}
+.compact-top{flex:0 0 38px;margin:0;min-height:38px}
+.compact-top .brand{font-size:1.13rem}
+.top-actions{display:flex;align-items:center;gap:6px}
+.compact-top .pill{padding:5px 10px;min-height:32px;font-size:.77rem}
+.arena{display:flex;flex-direction:column;min-height:0;flex:1;gap:2px}
+.arena-opponent,.arena-self{min-height:0;flex:1;display:flex;flex-direction:column;justify-content:center;gap:2px}
+.arena-hud{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:.77rem;line-height:1.15;color:#f5dfb1;min-height:19px;max-width:330px;width:100%;margin:0 auto}
+.arena-hud span{color:#aec7b9;white-space:nowrap;font-size:.72rem}
+.opponent-chips{display:flex;max-width:330px;width:100%;margin:0 auto;gap:5px;overflow-x:auto;scrollbar-width:none}
+.opponent-chips::-webkit-scrollbar{display:none}
+.opponent-chip{border:1px solid #577365;background:#102a23;color:#dbe7d7;border-radius:100px;padding:3px 8px;font-size:.68rem;white-space:nowrap;min-height:24px}
+.opponent-chip.active{border-color:#e9be74;color:#e9be74}
+.arena-row{width:100%;max-width:330px;margin:0 auto}
+.arena-label{display:block;font-size:.57rem;line-height:1.15;text-transform:uppercase;letter-spacing:.13em;color:#9fbbab;margin:2px 0}
+.arena-row .line{gap:5px;grid-template-columns:repeat(3,minmax(0,1fr))}
+.arena-row .card{aspect-ratio:auto;height:clamp(48px,10.7dvh,92px);padding:4px;border-radius:8px;border-width:1.5px;box-shadow:0 2px 0 #10251e;min-height:44px}
+.arena-row .card .rank{font-size:clamp(.77rem,2.9vw,1.05rem)}
+.arena-row .card .rank small{font-size:.7em}
+.arena-row .card .center{font-size:clamp(1.1rem,5.4vw,1.8rem)}
+.arena-row .card .foot{display:none}
+.arena-row .card.back{border-width:2px}
+.arena-row .card.back .center{font-size:1.6rem}
+.arena-row .card.selected{outline-width:2px}
+.arena-row .card.empty{font-size:1.55rem}
+.arena-middle{height:clamp(50px,9dvh,76px);flex:0 0 auto;display:grid;place-items:center;border-block:1px solid #56766a60;margin:1px 0;color:#e8d4a7;overflow:hidden}
+.arena-instruction{max-width:330px;text-align:center;font-size:clamp(.68rem,1.8dvh,.84rem);line-height:1.25;padding:3px 10px}
+.clash-dice{width:100%;max-width:330px;display:flex;align-items:center;justify-content:center;gap:9px}
+.clash-side{min-width:0;display:flex;flex-direction:column;align-items:center;gap:3px;font-size:.72rem}
+.clash-versus{font-family:Georgia,serif;font-style:italic;font-size:.78rem;color:#9fbbab}
+.clash-dice .dice{gap:3px;justify-content:center}
+.clash-dice .die{width:26px;height:26px;border-radius:5px;font-size:.98rem}
+.arena-dock{min-height:44px;flex:0 0 auto;display:flex;align-items:stretch;justify-content:center;gap:6px;max-width:330px;width:100%;margin:2px auto 0}
+.arena-dock .button{min-height:42px;padding:6px 10px;border-radius:10px;flex:1;font-size:.8rem}
+.arena-dock .battle-result{align-self:center;flex:2;font-size:.72rem;line-height:1.1}
+.arena-dock .battle-result[hidden]{display:none}
+.reserve-trigger{border:1px solid #779383;background:#203e33;color:#f6e1ae;border-radius:20px;padding:2px 10px;font-size:.69rem;align-self:center;min-height:25px}
+.reserve-overlay{position:absolute;z-index:5;left:10px;right:10px;bottom:calc(50px + env(safe-area-inset-bottom));border:1px solid #7e9b89;border-radius:15px;background:#18362c;padding:10px;box-shadow:0 15px 40px #071c17}
+.reserve-overlay .reserve{max-height:120px}
+.reserve-overlay .card{min-width:66px;width:66px;height:92px}
+.sheet-scrim{position:fixed;inset:0;background:#061b1699;z-index:9}
+.arena-sheet{position:fixed;z-index:10;left:0;right:0;bottom:0;max-height:72dvh;overflow:auto;background:#1c3b32;border-radius:20px 20px 0 0;border-top:1px solid #809d8d;padding:18px 18px calc(18px + env(safe-area-inset-bottom));box-shadow:0 -14px 50px #071a15}
+.arena-sheet h3{font:normal 1.4rem Georgia,serif;margin:0}
+.arena-sheet textarea{width:100%;background:#102a23;color:white;border:1px solid #688276;border-radius:8px;padding:8px;margin-top:8px;overflow-wrap:anywhere}
+@media(max-height:600px){.compact-app{overflow-y:auto}.arena{min-height:525px}.arena-row .card{height:48px}.arena-middle{height:48px}}
