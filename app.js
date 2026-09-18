@@ -295,10 +295,9 @@ function restoreNoticeText(saved,viewer=saved.turn) {
     `${saved.players[alert.seat].name} rejoined from ${alert.kind==='invite'?'an invite':'a backup'} before their last move. This is a heads-up, not proof of cheating.`).join(' ');
 }
 function shareMessage(saved,url) {
-  const notice=restoreNoticeText(saved);
-  if(saved.phase==='victory')return `${saved.players.find(p=>p.alive)?.name||'A kingdom'} wins Regicidious! ${lastBattleSentence(saved)} ${notice?`${notice} `:''}${url}`;
-  if(saved.phase==='setup')return `${saved.players[saved.turn].name}, the enemy is at the gates! Set your battle lines in Regicidious. ${notice?`${notice} `:''}${url}`;
-  return `${lastBattleSentence(saved)} ${saved.players[saved.turn].name}, it’s your turn #${saved.turnNumber}. To arms! ${notice?`${notice} `:''}${url}`;
+  if(saved.phase==='victory')return `${saved.players.find(p=>p.alive)?.name||'A kingdom'} wins Regicidious! ${lastBattleSentence(saved)} ${url}`;
+  if(saved.phase==='setup')return `${saved.players[saved.turn].name}, the enemy is at the gates! Set your battle lines in Regicidious. ${url}`;
+  return `${lastBattleSentence(saved)} ${saved.players[saved.turn].name}, it’s your turn #${saved.turnNumber}. To arms! ${url}`;
 }
 function ensureTurnLink() {
   if(!game||game.mode!=='text')return;
@@ -1618,7 +1617,7 @@ app.addEventListener('click', event => {
       const localNotices=kind==='turn'?existing?.game.restoreNotices?.filter(n=>n.seat===Number(recallSeat(restored.matchId)))||[]:[];
       game=restored;slotId=existing?.id??makeSlotId();backupText='';hubOpen=false;scoresOpen=false;
       if(localNotices.length)game.restoreNotices=[...game.restoreNotices.filter(n=>n.seat!==localNotices[0].seat),...localNotices];
-      if(restored.mode==='text'&&kind==='backup'&&seat!=null&&restored.phase!=='victory'){
+      if(restored.mode==='text'&&kind==='backup'&&seat!=null&&!['invite','victory'].includes(restored.phase)){
         game.restoreNotices=[...game.restoreNotices.filter(n=>n.seat!==seat),{seat,kind:restored.phase==='invite'?'invite':'backup',turnNumber:restored.turnNumber}];
       }
       if(keep){
