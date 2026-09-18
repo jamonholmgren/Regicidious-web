@@ -2,6 +2,8 @@
 const StateCodec = (() => {
   const phases=['setup','buy','arrange','attack','battle','queen','refill','income','victory','stalemate'];
   const ranks=['A','2','3','4','5','6','7','8','9','10','J','Q','K'];
+  const personas=[null,'serf','captain','warlord'];
+  const playerFlags=p=>(p.alive?1:0)|(p.cpu?2:0)|(Math.max(0,personas.indexOf(p.persona))<<2);
   const encoder=new TextEncoder(), decoder=new TextDecoder('utf-8',{fatal:true});
   const cardCode=id => id==null?255:Number(id.split('-')[0])*16+ranks.indexOf(id.split('-')[1]);
   const cardFrom=code => code===255?null:`${code>>4}-${ranks[code&15]}`;
@@ -22,7 +24,7 @@ const StateCodec = (() => {
     byte(state.selection?.index??255);byte(state.attacks);byte(state.kills);
     byte(state.refill.length);for(const i of state.refill)byte(i);byte(state.refillIndex);
     for(const p of state.players) {
-      string(p.name);byte((p.alive?1:0)|(p.cpu?2:0));number(p.coins);
+      string(p.name);byte(playerFlags(p));number(p.coins);
       ranksPacked([...p.front,...p.back]);
       byte(p.reserve.length);ranksPacked(p.reserve);
       byte(p.deck.length);ranksPacked(p.deck);
@@ -65,7 +67,7 @@ const StateCodec = (() => {
       byte(origin.view==null?255:origin.view);number(origin.round);
       byte(origin.attacks||0);byte(origin.kills||0);number(origin.turnNumber||1);
       for(const p of origin.players){
-        byte((p.alive?1:0)|(p.cpu?2:0));number(p.coins);
+        byte(playerFlags(p));number(p.coins);
         ranksPacked([...p.front,...p.back]);
         byte(p.reserve.length);ranksPacked(p.reserve);
         byte(p.deck.length);ranksPacked(p.deck);
@@ -104,7 +106,7 @@ const StateCodec = (() => {
           byte(snap.view==null?255:snap.view);number(snap.round);
           byte(snap.attacks||0);byte(snap.kills||0);number(snap.turnNumber||1);
           for(const p of snap.players){
-            byte((p.alive?1:0)|(p.cpu?2:0));number(p.coins);
+            byte(playerFlags(p));number(p.coins);
             ranksPacked([...p.front,...p.back]);
             byte(p.reserve.length);ranksPacked(p.reserve);
             byte(p.deck.length);ranksPacked(p.deck);
@@ -117,6 +119,8 @@ const StateCodec = (() => {
       byte(0xa9);
       number(Math.floor(Number(state.startedAt)/1000));
     }
+    if(state.usedAttacker){byte(0xaa);card(state.usedAttacker);}
+    if(state.scout){byte(0xab);byte(state.scout.player);byte(state.scout.index|(state.scout.row==='back'?128:0));card(state.scout.id);}
     // Detect accidental truncation/corruption. This is not a security signature.
     let check=2166136261;
     for(const n of out)check=Math.imul(check^n,16777619)>>>0;
@@ -156,7 +160,7 @@ const StateCodec = (() => {
       const name=string(),flags=byte(),coins=number();
       const board=ranksPacked(boardCount,i),front=board.slice(0,lineLen),back=board.slice(lineLen);
       const reserve=ranksPacked(byte(),i),deck=ranksPacked(byte(),i);
-      return {name,suit:i,cpu:!!(flags&2),alive:!!(flags&1),coins,front,back,reserve,deck};
+      return {name,suit:i,cpu:!!(flags&2),alive:!!(flags&1),persona:personas[flags>>2]||null,coins,front,back,reserve,deck};
     });
     let pending=null;
     if(byte()) {
@@ -175,7 +179,7 @@ const StateCodec = (() => {
       const undoCount=byte();if(undoCount>3)throw Error('Invalid refill history');
       for(let i=0;i<undoCount;i++)refillUndo.push({owner:byte(),from:byte(),to:byte(),card:card()});
     }
-    let matchId='',turnNumber=1,currentBattles=[],lastBattles=[],history=null,startedAt=0;
+    let matchId='',turnNumber=1,currentBattles=[],lastBattles=[],history=null,startedAt=0,usedAttacker=null,scout=null;
     if(at<data.length-4){
       if(byte()!==0xa7)throw Error('Unknown match extension');
       const idLength=byte();if(idLength!==0&&idLength!==16)throw Error('Invalid match ID');
@@ -199,6 +203,8 @@ const StateCodec = (() => {
     while(at<data.length-4){
       const mag=byte();
       if(mag===0xa9){startedAt=number()*1000;continue;}
+      if(mag===0xaa){usedAttacker=card();continue;}
+      if(mag===0xab){const player=byte(),slot=byte();scout={player,row:slot&128?'back':'front',index:slot&127,id:card()};continue;}
       if(mag!==0xa8)throw Error('Unknown match extension');
       const originTurn=byte(),originSetup=byte(),originPhase=phases[byte()],originView=byte(),originRound=number();
       if(!originPhase)throw Error('Invalid history origin');
@@ -207,7 +213,7 @@ const StateCodec = (() => {
         const flags=byte(),coins=number();
         const board=ranksPacked(boardCount,i),front=board.slice(0,lineLen),back=board.slice(lineLen);
         const reserve=ranksPacked(byte(),i),deck=ranksPacked(byte(),i);
-        return {front,back,reserve,deck,coins,alive:!!(flags&1),cpu:!!(flags&2)};
+        return {front,back,reserve,deck,coins,alive:!!(flags&1),cpu:!!(flags&2),persona:personas[flags>>2]||null};
       });
       const eventCount=number();
       if(eventCount>8192)throw Error('Invalid history');
@@ -253,7 +259,7 @@ const StateCodec = (() => {
             const flags=byte(),coins=number();
             const board=ranksPacked(boardCount,i),front=board.slice(0,lineLen),back=board.slice(lineLen);
             const reserve=ranksPacked(byte(),i),deck=ranksPacked(byte(),i);
-            return {front,back,reserve,deck,coins,alive:!!(flags&1),cpu:!!(flags&2)};
+            return {front,back,reserve,deck,coins,alive:!!(flags&1),cpu:!!(flags&2),persona:personas[flags>>2]||null};
           });
           historyEvents.push({t:'sync',origin:{turn:snapTurn,setup:snapSetup,phase:snapPhase,view:snapView===255?null:snapView,round:snapRound,attacks:snapAttacks,kills:snapKills,turnNumber:snapTurnNumber,players:snapPlayers}});
         } else throw Error('Unknown history event');
@@ -264,7 +270,7 @@ const StateCodec = (() => {
     if(at!==data.length-4)throw Error('Unexpected match data');
     return {version:1,layout,queenRule,mode,players,turn,round,phase,setup,view:viewCode===255?null:viewCode,
       selection:selectionCode===255?null:{location:['front','back','reserve'][selectionCode],index:selectionIndex},
-      attacks,kills,pending,refill,refillIndex,refillUndo,matchId,turnNumber,currentBattles,lastBattles,message,log,history,startedAt};
+      attacks,usedAttacker,scout,kills,pending,refill,refillIndex,refillUndo,matchId,turnNumber,currentBattles,lastBattles,message,log,history,startedAt};
   }
   return {encode,decode};
 })();

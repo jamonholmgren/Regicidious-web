@@ -14,7 +14,7 @@ const app = document.querySelector('#app');
 let game = null;
 let slotId=null,hubOpen=false;
 let storageError = '';
-let draft = { mode:'solo',count:2, layout:'expanded', names: ['You','Crimson Court','Iron Court','Ember Court'] };
+let draft = { mode:'solo',count:2, layout:'expanded',difficulty:'captain', names: ['You','Crimson Court','Iron Court','Ember Court'] };
 try {
   const rememberedName=localStorage.getItem(PLAYER_NAME_KEY);
   if(rememberedName!=null&&rememberedName.trim())draft.names[0]=rememberedName.slice(0,24);
@@ -105,7 +105,7 @@ function captureOrigin(state) {
   return {
     turn:state.turn,round:state.round,phase:state.phase,setup:state.setup,view:state.view,
     attacks:state.attacks,kills:state.kills,turnNumber:state.turnNumber||1,
-    players:state.players.map(p=>({front:[...p.front],back:[...p.back],reserve:[...p.reserve],deck:[...p.deck],coins:p.coins,alive:p.alive,cpu:p.cpu}))
+    players:state.players.map(p=>({front:[...p.front],back:[...p.back],reserve:[...p.reserve],deck:[...p.deck],coins:p.coins,alive:p.alive,cpu:p.cpu,persona:p.persona||null}))
   };
 }
 function record(event) {
@@ -137,6 +137,10 @@ function validateState(saved) {
   if(!validIndex(saved.turn,count)||!validIndex(saved.setup,count)||!Number.isInteger(saved.round)||saved.round<1||saved.round>1000000)bad();
   if(!['setup','buy','arrange','attack','battle','queen','refill','income','victory','stalemate'].includes(saved.phase)||saved.view!=null&&!validIndex(saved.view,count))bad();
   if(!Number.isInteger(saved.attacks)||saved.attacks>2||saved.attacks<0||!Number.isInteger(saved.kills)||saved.kills<0||saved.kills>2)bad();
+  saved.usedAttacker??=saved.pending?.attackCard||saved.currentBattles?.at(-1)?.attackCard||null;
+  if(saved.usedAttacker!=null&&!validCard(saved.usedAttacker,saved.turn))bad();
+  saved.scout??=null;
+  if(saved.scout!=null&&(!validIndex(saved.scout.player,count)||saved.scout.player===saved.turn||!['front','back'].includes(saved.scout.row)||!validIndex(saved.scout.index,saved.layout==='expanded'?4:3)||!validCard(saved.scout.id,saved.scout.player)))bad();
   saved.refillUndo??=[];
   if(!Array.isArray(saved.refill)||saved.refill.length>count||new Set(saved.refill).size!==saved.refill.length||saved.refill.some(i=>!validIndex(i,count)))bad();
   if(!Array.isArray(saved.refillUndo)||saved.refillUndo.length>3||saved.refillUndo.some(m=>!validIndex(m.owner,count)||!validIndex(m.from,cols)||!validIndex(m.to,cols)||!validCard(m.card,m.owner)))bad();
@@ -156,6 +160,8 @@ function validateState(saved) {
     }
   }
   saved.players.forEach((p,i)=>{
+    p.persona??=p.cpu?'captain':null;
+    if(p.persona!=null&&!['serf','captain','warlord'].includes(p.persona))bad();
     if(p?.suit!==i||typeof p.name!=='string'||p.name.length>128||typeof p.alive!=='boolean'||typeof p.cpu!=='boolean'||!Number.isInteger(p.coins)||p.coins<0||p.coins>10000)bad();
     if(!Array.isArray(p.front)||p.front.length!==cols||!Array.isArray(p.back)||p.back.length!==cols||!Array.isArray(p.reserve)||!Array.isArray(p.deck))bad();
     const cards=[...p.front,...p.back,...p.reserve,...p.deck].filter(id=>id!=null);
@@ -360,17 +366,17 @@ function newGame() {
     if(layout==='classic'){
       const six = [`${i}-K`,`${i}-Q`,`${i}-J`,...pool.splice(0,3)];
       pool.sort((a,b)=>RANKS.indexOf(rank(a))-RANKS.indexOf(rank(b)));
-      const p={ name:draft.names[i].trim() || `Player ${i+1}`, suit:i, cpu:draft.mode==='solo' && i!==0, front:[six[1],six[2],six[3]], back:[six[0],six[4],six[5]], reserve:[], deck:pool, coins:0, alive:true };
+      const p={ name:draft.names[i].trim() || `Player ${i+1}`, suit:i, cpu:draft.mode==='solo' && i!==0, persona:draft.mode==='solo'&&i!==0?draft.difficulty:null, front:[six[1],six[2],six[3]], back:[six[0],six[4],six[5]], reserve:[], deck:pool, coins:0, alive:true };
       if (p.cpu) arrangeAI(p);
       return p;
     }
     const seven = [`${i}-K`,`${i}-Q`,`${i}-J`,...pool.splice(0,4)];
     pool.sort((a,b)=>RANKS.indexOf(rank(a))-RANKS.indexOf(rank(b)));
-    const p={ name:draft.names[i].trim() || `Player ${i+1}`, suit:i, cpu:draft.mode==='solo' && i!==0, front:[seven[1],seven[2],seven[3],seven[4]], back:[seven[0],seven[5],seven[6],null], reserve:[], deck:pool, coins:0, alive:true };
+    const p={ name:draft.names[i].trim() || `Player ${i+1}`, suit:i, cpu:draft.mode==='solo' && i!==0, persona:draft.mode==='solo'&&i!==0?draft.difficulty:null, front:[seven[1],seven[2],seven[3],seven[4]], back:[seven[0],seven[5],seven[6],null], reserve:[], deck:pool, coins:0, alive:true };
     if (p.cpu) arrangeAI(p);
     return p;
   });
-  game = {version:1,layout,queenRule:'cedric',mode:draft.mode,players,turn:0,round:1,phase:'setup',setup:0,view:draft.mode==='text'?0:null,selection:null,attacks:0,kills:0,pending:null,refill:[],refillIndex:0,refillUndo:[],matchId:makeMatchId(),turnNumber:1,currentBattles:[],lastBattles:[],message:'',log:[],history:null,startedAt:Math.floor(Date.now()/1000)*1000};
+  game = {version:1,layout,queenRule:'cedric',mode:draft.mode,players,turn:0,round:1,phase:'setup',setup:0,view:draft.mode==='text'?0:null,selection:null,attacks:0,usedAttacker:null,scout:null,kills:0,pending:null,refill:[],refillIndex:0,refillUndo:[],matchId:makeMatchId(),turnNumber:1,currentBattles:[],lastBattles:[],message:'',log:[],history:null,startedAt:Math.floor(Date.now()/1000)*1000};
   game.history={origin:captureOrigin(game),events:[]};
   if(draft.mode==='text') persistSeat(game.matchId,0);
   navigator.storage?.persist?.().catch(() => {});
@@ -382,7 +388,7 @@ function advanceTurn() {
   if (next <= game.turn) game.round++;
   if(game.mode==='text'){game.lastBattles=game.currentBattles;game.currentBattles=[];game.turnNumber++;}
   game.turn = next; game.phase = player(next).cpu?'buy':'arrange'; game.view = game.mode==='text'?next:null; game.selection = null;
-  game.attacks = 0; game.kills = 0; game.pending = null;
+  game.attacks = 0; game.usedAttacker=null; game.scout=null; game.kills = 0; game.pending = null;
   game.message = player(next).cpu?`${player(next).name} is thinking…`:'';
 }
 function cardHTML(id, action, location, index, opts={}) {
@@ -451,8 +457,9 @@ function renderStart() {
 function renderSetup() {
   const modes=[['solo','Solo vs computer'],['local','Pass the phone'],['text','Text-message multiplayer']];
   const layouts=[['expanded','Expanded · 4 across, 7 cards'],['classic','Classic · 3 across, 6 cards']];
-  const royalRules=`<p class="small muted">A neighboring peasant lends the Queen a die when she attacks and falls in her place if she loses. When the King defends, a neighboring peasant takes a winning hit for him. The weakest adjacent peasant falls first.</p>`;
-  frame(`<div class="setup-heading"><button class="button ghost" data-action="setup-back">‹ Back</button><h1>New game</h1></div><section class="panel setup-panel"><p class="flavor">M’lord, our enemies are at the gates. We must prepare for war!</p><div class="label">Mode</div><div class="actions mode-actions">${modes.map(([mode,title])=>`<button class="button ${draft.mode===mode?'':'ghost'}" data-action="mode" data-value="${mode}">${title}</button>`).join('')}</div><div class="label">Battle lines</div><div class="actions mode-actions">${layouts.map(([layout,title])=>`<button class="button ${draft.layout===layout?'':'ghost'}" data-action="layout" data-value="${layout}">${title}</button>`).join('')}</div>${royalRules}<div class="label">${draft.mode==='solo'?'Computer opponents':'Players'}</div><div class="actions">${[2,3,4].map(n=>`<button class="button ${draft.count===n?'':'ghost'}" data-action="count" data-value="${n}">${draft.mode==='solo'?n-1:n}</button>`).join('')}</div><div class="stack" style="margin-top:18px">${draft.names.slice(0,draft.mode==='solo'?1:draft.count).map((name,i)=>`<label class="field"><span>${SUITS[i]} ${draft.mode==='solo'?'Your name':NAMES[i]}</span><input data-name="${i}" maxlength="24" value="${escapeHTML(name)}" autocomplete="off"></label>`).join('')}</div>${draft.mode==='text'?`<p class="small muted">Name every player now. After setting your own lines, send each person their invite. Links discourage casual peeking but are not cheat-proof.</p>`:''}<button class="button wide begin-game" data-action="start">Begin the war →</button></section>`);
+  const royalRules=`<p class="small muted">Make up to two attacks with different cards each turn. A neighboring peasant lends the Queen a die when she attacks and falls in her place if she loses. When the King defends, a neighboring peasant takes a winning hit for him. The weakest adjacent peasant falls first.</p>`;
+  const difficulty=draft.mode==='solo'?`<div class="label">Enemy commander</div><div class="actions mode-actions">${[['serf','Serf · easy'],['captain','Captain · normal'],['warlord','Warlord · hard']].map(([id,title])=>`<button class="button ${draft.difficulty===id?'':'ghost'}" data-action="difficulty" data-value="${id}">${title}</button>`).join('')}</div><p class="small muted">Serf charges recklessly. Captain weighs the odds. Warlord guards the crown and picks fights carefully.</p>`:'';
+  frame(`<div class="setup-heading"><button class="button ghost" data-action="setup-back">‹ Back</button><h1>New game</h1></div><section class="panel setup-panel"><p class="flavor">M’lord, our enemies are at the gates. We must prepare for war!</p><div class="label">Mode</div><div class="actions mode-actions">${modes.map(([mode,title])=>`<button class="button ${draft.mode===mode?'':'ghost'}" data-action="mode" data-value="${mode}">${title}</button>`).join('')}</div><div class="label">Battle lines</div><div class="actions mode-actions">${layouts.map(([layout,title])=>`<button class="button ${draft.layout===layout?'':'ghost'}" data-action="layout" data-value="${layout}">${title}</button>`).join('')}</div>${difficulty}${royalRules}<div class="label">${draft.mode==='solo'?'Computer opponents':'Players'}</div><div class="actions">${[2,3,4].map(n=>`<button class="button ${draft.count===n?'':'ghost'}" data-action="count" data-value="${n}">${draft.mode==='solo'?n-1:n}</button>`).join('')}</div><div class="stack" style="margin-top:18px">${draft.names.slice(0,draft.mode==='solo'?1:draft.count).map((name,i)=>`<label class="field"><span>${SUITS[i]} ${draft.mode==='solo'?'Your name':NAMES[i]}</span><input data-name="${i}" maxlength="24" value="${escapeHTML(name)}" autocomplete="off"></label>`).join('')}</div>${draft.mode==='text'?`<p class="small muted">Name every player now. After setting your own lines, send each person their invite. Links discourage casual peeking but are not cheat-proof.</p>`:''}<button class="button wide begin-game" data-action="start">Begin the war →</button></section>`);
 }
 function renderVeil() {
   const index = game.phase === 'setup' ? game.setup : game.phase === 'refill' ? game.refill[game.refillIndex] : game.phase === 'queen' ? game.pending.defender : game.turn;
@@ -473,7 +480,7 @@ function arenaRow(owner,row,own,mode,visual) {
   const cards=p[row].map((id,index)=>{
     let action='';
     if(own && ['setup','buy','arrange','refill'].includes(mode))action='slot';
-    if(own && mode==='attack' && id && (row==='front'||rank(id)==='10'))action='attacker';
+    if(own && mode==='attack' && id && id!==game.usedAttacker && (row==='front'||rank(id)==='10'))action='attacker';
     if(!own && mode==='attack' && id)action='target';
     const source=visual?.source?.owner===owner&&visual.source.row===row&&visual.source.index===index;
     const target=visual?.target?.owner===owner&&visual.target.row===row&&visual.target.index===index;
@@ -531,7 +538,7 @@ function renderPlay() {
     intro = buyPrompt?'Hark! Tap the gilded hollow again to hire a random card for 2 coins.':`Prepare!! Good sire, array thy vanguard ere the horns sound.${p.coins>=2&&p.deck.length?' Tap an empty hollow twice to hire a random card for 2 coins.':''}`;
     controls = `${canBolster?`<button class="button secondary" data-action="bolster">Bolster your lines</button>`:''}<button class="button wide" data-action="next">To arms!</button>`;
   } else if (game.phase === 'attack') {
-    intro = `Attack!! Sally ${game.attacks+1}/2: tap thy front champion or rear Knight, then a foe.`;
+    intro = `Attack!! Sally ${game.attacks+1}/2: tap thy front champion or rear Knight, then a foe.${game.attacks?' A different champion must lead this charge.':''}`;
     controls = `<button class="button secondary wide" data-action="finish-attacks">${retreatArmed===retreatKey()?'Confirm end attacks':game.attacks?'Sound the retreat':'Hold the line'} →</button>`;
   } else {
     const jack = hasCard(p,'J') ? 1 : 0;
@@ -697,14 +704,14 @@ function renderPlayback() {
 function article(title) { return /^[AEIOU]/.test(title)?'an':'a'; }
 function applyOrigin(state, origin) {
   state.turn=origin.turn;state.round=origin.round;state.phase=origin.phase;state.setup=origin.setup;
-  state.view=origin.view;state.attacks=origin.attacks;state.kills=origin.kills;
+  state.view=origin.view;state.attacks=origin.attacks;state.usedAttacker=null;state.scout=null;state.kills=origin.kills;
   state.turnNumber=origin.turnNumber||1;state.selection=null;state.pending=null;
   state.refill=[];state.refillIndex=0;state.refillUndo=[];state.currentBattles=[];state.lastBattles=[];
   state.message='';state.log=[];
   state.players.forEach((p,i)=>{
     const s=origin.players[i];
     p.front=[...s.front];p.back=[...s.back];p.reserve=[...s.reserve];p.deck=[...s.deck];
-    p.coins=s.coins;p.alive=s.alive;p.cpu=s.cpu;
+    p.coins=s.coins;p.alive=s.alive;p.cpu=s.cpu;p.persona=s.persona||null;
   });
 }
 function stateFromOrigin(saved) {
@@ -739,6 +746,7 @@ function applyHistoryEvent(event) {
     if(event.actor!=null)game.turn=event.actor;
     const source=event.source,defender=event.defender,target={player:defender,...event.target};
     const attackCard=player(game.turn)[source.row][source.index],defendCard=player(defender)[target.row][target.index];
+    game.usedAttacker=attackCard;
     const sacrifice=event.sacrifice||[];
     if(game.mode==='text'){
       const chosen=sacrifice.length?sacrifice[weakestSacrifice({sacrifice})]:null;
@@ -1029,6 +1037,7 @@ function resolveBattle() {
     if(sacrificeIndex>=0){const slot=b.sacrifice[sacrificeIndex];defeat(game.turn,slot.row,slot.index);}
     else defeat(game.turn,b.source.row,b.source.index);
   }
+  game.scout=player(b.defender)[b.target.row][b.target.index]===b.defendCard?{player:b.defender,row:b.target.row,index:b.target.index,id:b.defendCard}:null;
   reinforceFront(player(b.defender));
   if(b.result==='defend')reinforceFront(player(game.turn));
   game.attacks++;
@@ -1040,18 +1049,46 @@ function resolveBattle() {
   }
   if (!player(game.turn).alive) { advanceTurn(); return; }
   game.phase='attack'; game.view=player(game.turn).cpu?null:game.turn; game.message='';
-  if (game.attacks>=2 || !player(game.turn).front.some(Boolean) && !player(game.turn).back.some(id=>id&&rank(id)==='10')) finishAttacks();
+  if (game.attacks>=2 || !player(game.turn).front.some(id=>id&&id!==game.usedAttacker) && !player(game.turn).back.some(id=>id&&id!==game.usedAttacker&&rank(id)==='10')) finishAttacks();
 }
 
 function cardPriority(id) {
   const r=rank(id);
   return r==='Q'?18:r==='10'?17:r==='A'?15:r==='J'?13:r==='9'?12:r==='8'?11:r==='K'?-100:value(id);
 }
+const AI_TACTICS={
+  serf:{risk:0,jitter:16,guardedKing:[7,7]},
+  captain:{risk:1,jitter:.025,guardedKing:[7,7]},
+  warlord:{risk:1,jitter:.025,guardedKing:[3.8,2.2],queenTarget:4,knightTarget:2.5,jackTarget:2,assassinTarget:3,queenGuardAware:true},
+};
 function arrangeAI(p) {
   const frontLen=p.front?.length||3, backLen=p.back?.length||3;
   const cards=[...p.front,...p.back,...p.reserve].filter(Boolean);
   const king=cards.find(id=>rank(id)==='K');
   if(king && cards.length===1){p.front=[king,...Array(frontLen-1).fill(null)];p.back=Array(backLen).fill(null);p.reserve=[];return;}
+  if(p.persona==='serf'){
+    const field=shuffle(cards.filter(id=>id!==king));
+    p.front=[...field.slice(0,frontLen),...Array(Math.max(0,frontLen-field.length)).fill(null)];
+    const rear=[king,...field.slice(frontLen)];
+    p.back=[...rear.slice(0,backLen),...Array(Math.max(0,backLen-rear.length)).fill(null)];
+    p.reserve=rear.slice(backLen);
+    return;
+  }
+  if(p.persona==='warlord' && king){
+    const field=cards.filter(id=>id!==king),queen=field.find(id=>rank(id)==='Q');
+    const peasants=field.filter(isPeasant).sort((a,b)=>value(b)-value(a));
+    const queenAlly=queen?peasants[0]:null;
+    const guard=field.length>frontLen?peasants.findLast(id=>id!==queenAlly):null;
+    const front=[...(queen?[queen]:[]),...(queenAlly?[queenAlly]:[])];
+    front.push(...field.filter(id=>id!==guard&&!front.includes(id)).sort((a,b)=>cardPriority(b)-cardPriority(a)));
+    p.front=[...front.slice(0,frontLen),...Array(Math.max(0,frontLen-front.length)).fill(null)];
+    const rest=field.filter(id=>!p.front.includes(id));
+    const rear=[...Array(backLen).fill(null)];
+    rear[1]=king;
+    for(const id of rest.slice(0,backLen-1))rear[rear[0]==null?0:rear.findIndex((slot,i)=>i!==1&&!slot)]=id;
+    p.back=rear;p.reserve=rest.slice(backLen-1);
+    return;
+  }
   const queen=cards.find(id=>rank(id)==='Q');
   let front=[];
   if (queen) {
@@ -1076,34 +1113,38 @@ function refillAI(p) {
 }
 function chooseAIAttack() {
   const self=player(game.turn);
+  const persona=self.persona||'captain';
+  const tactics=AI_TACTICS[persona]||AI_TACTICS.captain;
   const targets=[];
   for(const enemy of living()) if(enemy!==game.turn) {
     for(const row of ['front','back']) for(let index=0;index<player(enemy)[row].length;index++) if(player(enemy)[row][index]) targets.push({enemy,row,index});
   }
   const choices=[];
   for(const sourceRow of ['front','back']) for(let index=0;index<self[sourceRow].length;index++) {
-    const id=self[sourceRow][index]; if(!id || sourceRow==='back' && rank(id)!=='10') continue;
+    const id=self[sourceRow][index]; if(!id || id===game.usedAttacker || sourceRow==='back' && rank(id)!=='10') continue;
     for(const t of targets) {
       if(t.row==='back' && (rank(id)!=='10' || sourceRow==='back')) continue;
       // Evaluate a probability model for a face-down card, never its actual rank.
-      const guesses=t.row==='back'?[['K',.48],['Q',.12],['J',.12],['10',.08],['8',.2]]:[['Q',.23],['J',.18],['10',.14],['A',.12],['8',.33]];
+      const seen=persona==='warlord'&&game.scout?.player===t.enemy&&game.scout.row===t.row&&game.scout.index===t.index?game.scout.id:null;
+      const guesses=seen?[[rank(seen),1]]:t.row==='back'?[['K',.48],['Q',.12],['J',.12],['10',.08],['8',.2]]:[['Q',.23],['J',.18],['10',.14],['A',.12],['8',.33]];
       let score=0;
+      const occupiedGuard=[t.index-1,t.index+1].filter(i=>i>=0&&i<player(t.enemy)[t.row].length&&player(t.enemy)[t.row][i]).length;
       for(const [r,probability] of guesses) {
         const imagined=`${t.enemy}-${r}`;
         const attackCount=1+(value(id)>value(imagined)?1:0)+(rank(id)==='10'&&t.row==='front'?1:0)+(rank(id)==='Q'&&adjacentPeasants(self,sourceRow,index).length?1:0);
         const defendCount=1+(value(imagined)>value(id)?1:0);
         const ordinary=diceOdds(attackCount,defendCount);
         const odds=ordinary;
-        const targetValue=r==='K'?7:r==='Q'?2.4:r==='10'?1.7:1;
-        const ownValue=rank(id)==='K'?7:rank(id)==='Q'?2.6:rank(id)==='10'?1.8:1;
-        score+=probability*(odds.win*(1+targetValue)-odds.lose*(rank(id)==='A'?0:ownValue));
+        const targetValue=r==='K'?occupiedGuard?tactics.guardedKing[occupiedGuard-1]:7:r==='Q'?tactics.queenTarget||2.4:r==='10'?tactics.knightTarget||1.7:r==='J'?tactics.jackTarget||1:r==='A'?tactics.assassinTarget||1:1;
+        const ownValue=rank(id)==='K'?7:rank(id)==='Q'?tactics.queenGuardAware&&adjacentPeasants(self,sourceRow,index).length?1:2.6:rank(id)==='10'?1.8:1;
+        score+=probability*(odds.win*(1+targetValue)-tactics.risk*odds.lose*(rank(id)==='A'?0:ownValue));
       }
       if(t.row==='front' && player(t.enemy).front.filter(Boolean).length===1) score+=.15;
-      score+=(random(1000)/1000)*.025;
+      score+=(random(1000)/1000)*tactics.jitter;
       choices.push({sourceRow,sourceIndex:index,...t,score});
     }
   }
-  return choices.sort((a,b)=>b.score-a.score)[0];
+  return choices.reduce((best,choice)=>!best||choice.score>best.score?choice:best,null);
 }
 function computeDiceOdds(a,d) {
   let win=0,lose=0;
@@ -1156,6 +1197,7 @@ function attack(targetPlayer,row,index) {
   if (!source || !['front','back'].includes(source.location) || !player(game.turn)[source.location][source.index]) return;
   if (targetPlayer===game.turn || !player(targetPlayer)?.alive || !player(targetPlayer)[row]?.[index]) return;
   const attackCard=player(game.turn)[source.location][source.index], defendCard=player(targetPlayer)[row][index];
+  if(attackCard===game.usedAttacker){game.message='This champion has already attacked. Choose another for thy second charge.';game.selection=null;return;}
   if(source.location==='back' && (rank(attackCard)!=='10' || row!=='front')) { game.message='A back-line Knight can attack only the enemy front line.'; return; }
   if (row==='back' && rank(attackCard)!=='10') { game.message='Only a Knight (10) can attack the back line.'; return; }
   const sourceSlot={row:source.location,index:source.index}, target={player:targetPlayer,row,index};
@@ -1169,6 +1211,7 @@ function attack(targetPlayer,row,index) {
     game.currentBattles.push({actor:game.turn,defender:targetPlayer,source:sourceSlot,target:{row,index},attackCard,defendCard,attackDice,defendDice,result,sacrifice:chosen?{row:chosen.row,index:chosen.index}:null,beforeActor:[...player(game.turn).front,...player(game.turn).back],beforeDefender:[...player(targetPlayer).front,...player(targetPlayer).back]});
   }
   game.pending={defender:targetPlayer,source:sourceSlot,target,attackCard,defendCard,attackDice,defendDice,result,sacrifice};
+  game.usedAttacker=attackCard;
   game.phase='battle'; game.selection=null; game.message='';
   record({t:'attack',actor:game.turn,source:sourceSlot,defender:targetPlayer,target:{row,index},attackDice,defendDice,result,sacrifice});
 }
@@ -1360,6 +1403,7 @@ app.addEventListener('click', event => {
   }
   if(storageError) return;
   if (action==='count') { draft.count=Number(button.dataset.value); render(); return; }
+  if (action==='difficulty') { if(['serf','captain','warlord'].includes(button.dataset.value))draft.difficulty=button.dataset.value; render(); return; }
   if (action==='mode') { draft.mode=button.dataset.value; render(); return; }
   if (action==='layout') { draft.layout=button.dataset.value==='classic'?'classic':'expanded'; render(); return; }
   if (action==='start') { rememberPlayerName(draft.names[0]);clearLinkError(); return commit(newGame); }
@@ -1405,7 +1449,7 @@ app.addEventListener('click', event => {
     if (action==='attacker' && game.phase==='attack') {
       clearRetreat();
       const row=button.dataset.location,id=player(game.turn)[row]?.[index];
-      if (id && (row==='front' || row==='back' && rank(id)==='10')) game.selection=game.selection?.location===row&&game.selection.index===index?null:{location:row,index};
+      if (id && id!==game.usedAttacker && (row==='front' || row==='back' && rank(id)==='10')) game.selection=game.selection?.location===row&&game.selection.index===index?null:{location:row,index};
       return;
     }
     if (action==='target' && game.phase==='attack') { clearRetreat();const [owner,row]=button.dataset.location.split(':'); attack(Number(owner),row,index); return; }
