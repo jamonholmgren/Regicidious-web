@@ -39,6 +39,7 @@
 .clash-versus{font-family:Georgia,serif;font-style:italic;font-size:.72rem;color:#9fbbab}
 .clash-dice .dice{gap:2px;justify-content:center}
 .clash-dice .die{width:22px;height:22px;border-radius:5px;font-size:.86rem}
+.clash-dice .die.die-unused{background:#9eaaa4;color:#344a40;opacity:.5;filter:grayscale(1);transform:scale(.88)}
 .clash-analysis{min-width:0;text-align:left;color:#f5dfb1;font-size:clamp(.68rem,1.7dvh,.78rem);line-height:1.18;overflow-wrap:anywhere}
 .arena-dock{min-height:44px;flex:0 0 auto;display:flex;align-items:stretch;justify-content:center;gap:6px;max-width:330px;width:100%;margin:2px auto 0}
 .arena-dock .button{min-height:42px;padding:6px 10px;border-radius:10px;flex:1;font-size:.8rem}

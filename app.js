@@ -523,7 +523,8 @@ function renderArena(owner,mode,intro,controls,visual) {
   if(mode==='battle'||visual?.showDice) {
     const b=game.pending;
     const analysis=mode==='battle'?`<div class="clash-analysis battle-result" data-outcome="${escapeHTML(middleText)}" aria-live="polite">The dice tumble…</div>`:`<div class="clash-analysis" aria-live="polite">${escapeHTML(middleText)}</div>`;
-    middle=`<div class="clash-strip"><div class="clash-dice" data-dice-lane aria-live="off"><div class="clash-side"><span>${label(b.defendCard)}</span><div class="dice">${b.defendDice.map(()=>`<span class="die">?</span>`).join('')}</div></div><span class="clash-versus">vs</span><div class="clash-side"><span>${label(b.attackCard)}</span><div class="dice">${b.attackDice.map(()=>`<span class="die">?</span>`).join('')}</div></div></div>${analysis}</div>`;
+    const settled=visual?.kind==='result';
+    middle=`<div class="clash-strip"><div class="clash-dice" data-dice-lane aria-live="off"><div class="clash-side"><span>${label(b.defendCard)}</span><div class="dice">${diceFaces(b.defendDice,settled)}</div></div><span class="clash-versus">vs</span><div class="clash-side"><span>${label(b.attackCard)}</span><div class="dice">${diceFaces(b.attackDice,settled)}</div></div></div>${analysis}</div>`;
   }
   const own=player(owner);
   const seenReserve=visual?.revealAll&&target?.reserve?.length?`<div class="arena-row"><span class="arena-label">Reserve</span><div class="reserve">${target.reserve.map((id,i)=>cardHTML(id,'','reserve',i,{owner:opponent,row:'reserve'})).join('')}</div></div>`:'';
@@ -576,6 +577,10 @@ function diceCount(attacker, defender, source, target) {
   return [a,d];
 }
 function roll(count) { return Array.from({length:count}, () => random(6)+1); }
+function diceFaces(values,settled=false) {
+  const best=values.indexOf(Math.max(...values));
+  return values.map((value,i)=>`<span class="die${settled&&i!==best?' die-unused':''}">${settled?value:'?'}</span>`).join('');
+}
 function renderBattle() {
   const b = game.pending;
   const rescue=b.sacrifice.length?b.sacrifice[weakestSacrifice(b)]:null;
@@ -589,7 +594,9 @@ function animateDice(b) {
   const faces=[...lane.querySelectorAll('.die')],numbers=[...b.defendDice,...b.attackDice];
   const finish=()=>{
     if(!lane.isConnected)return;
-    faces.forEach((face,i)=>{face.textContent=numbers[i];});
+    const bestDefender=b.defendDice.indexOf(Math.max(...b.defendDice));
+    const bestAttacker=b.attackDice.indexOf(Math.max(...b.attackDice))+b.defendDice.length;
+    faces.forEach((face,i)=>{face.textContent=numbers[i];face.classList.toggle('die-unused',i!==bestDefender&&i!==bestAttacker);});
     lane.setAttribute('aria-live','polite');
     const result=app.querySelector('.battle-result'),button=app.querySelector('[data-action="battle-next"]');
     if(result)result.textContent=result.dataset.outcome;
@@ -693,10 +700,6 @@ function renderPlayback() {
     const visual={kind:step.kind,opponent:attacker,source,target,showTarget:step.kind!=='reveal',revealTarget:['roll','result'].includes(step.kind),showDice:['roll','result'].includes(step.kind),hideOwnOthers:playback.textReplay,loser,winner};
     renderArena(owner,'replay',narration,`<button class="button secondary" data-action="replay-next">${holdForContinue?'Continue':'Next'} →</button>`,visual);
     if(step.kind==='roll')animateDice(b);
-    if(step.kind==='result'){
-      const faces=app.querySelectorAll('[data-dice-lane] .die');
-      [...faces].forEach((face,i)=>{face.textContent=[...b.defendDice,...b.attackDice][i];});
-    }
     clearTimeout(replayTimer);
     replayTimer=null;
     if(!holdForContinue)replayTimer=setTimeout(advanceReplay,{reveal:600,target:650,roll:900,result:700}[step.kind]);
@@ -904,10 +907,6 @@ function renderMatchReplay() {
     renderArena(step.owner,'replay',step.narration,controls,step.visual);
     const b=game.pending;
     if(step.visual?.kind==='roll'&&b)animateDice(b);
-    if(step.visual?.kind==='result'&&b){
-      const faces=app.querySelectorAll('[data-dice-lane] .die');
-      [...faces].forEach((face,i)=>{face.textContent=[...b.defendDice,...b.attackDice][i];});
-    }
   } finally { game=finalGame; }
 }
 function renderQueen() {
