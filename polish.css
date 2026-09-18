@@ -40,6 +40,9 @@ body{min-height:100dvh;overflow-x:hidden;overscroll-behavior:none}
 .setup-panel .label:first-child{margin-top:0}
 .begin-game{margin-top:22px}
 .player-identity{display:grid;grid-template-columns:minmax(0,1fr) 74px;gap:9px;align-items:end}
+.identity-gate{max-width:540px;margin:5vh auto 0}
+.identity-gate h1{margin:8px 0 10px}
+.identity-gate .player-identity{margin:20px 0 24px}
 .emoji-field select{width:100%;min-height:46px;border:1px solid #688276;border-radius:12px;background:#102a23;color:#fff;font-size:1.45rem;text-align:center}
 .notice a,.arena-sheet a{color:#f4d797;text-underline-offset:2px}
 .dispatch-seats{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}

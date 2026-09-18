@@ -47,6 +47,7 @@ let scoresOpen=false,scoreLayout='expanded',scoreLink='',scoreLinkSource='',scor
 let tutorialOpen=false,tutorialStep=0,tutorialRolling=false,tutorialDice=null,tutorialTimer=null;
 const expandedGameDates=new Set();
 const SEAT_COOKIE='rgseat_';
+const IDENTITY_PREFIX='regicidious.identity.';
 try { installDismissed=localStorage.getItem('regicidious.install-tip.dismissed')==='1'; } catch { /* Storage warning appears elsewhere. */ }
 try { tutorialOpen=localStorage.getItem('regicidious.tutorial.open')==='1';tutorialStep=Math.min(8,Math.max(0,Number(localStorage.getItem('regicidious.tutorial.step'))||0)); } catch { /* The lesson can restart if preferences are unavailable. */ }
 const micro=n=>`${Math.round(n).toLocaleString()} µs`;
@@ -100,6 +101,13 @@ function recallSeat(matchId) {
   return null;
 }
 function textAccess() { return Number(recallSeat(game.matchId)??-1); }
+function identityKey(matchId,seat){return `${IDENTITY_PREFIX}${matchId}.${seat}`;}
+function needsFirstIdentity(){
+  if(!game||!['text','local'].includes(game.mode)||game.phase!=='setup'||game.setup===0)return false;
+  if(game.mode==='text'&&textAccess()!==game.setup)return false;
+  try{return localStorage.getItem(identityKey(game.matchId,game.setup))!=='1';}
+  catch{return true;}
+}
 function clearLinkError() { backupError=''; }
 function encodeForBackup(state) {
   const full=StateCodec.encode(state);
@@ -598,8 +606,13 @@ function renderSetup() {
   const layouts=[['expanded','Expanded · 4 across, 7 cards'],['classic','Classic · 3 across, 6 cards']];
   const royalRules=`<p class="small muted">The first commander gets one opening attack. Later turns allow two attacks with different cards. A neighboring peasant lends the Queen a die when she attacks and falls in her place if she loses. When the King defends, a neighboring peasant takes a winning hit for him. The weakest adjacent peasant falls first.</p>`;
   const difficulty=draft.mode==='solo'?`<div class="label">Enemy commander</div><div class="actions mode-actions">${[['serf','Serf · easy'],['captain','Captain · normal'],['warlord','Warlord · hard']].map(([id,title])=>`<button class="button ${draft.difficulty===id?'':'ghost'}" data-action="difficulty" data-value="${id}">${title}</button>`).join('')}</div><p class="small muted">Serf charges recklessly. Captain weighs the odds. Warlord guards the crown and picks fights carefully.</p>`:'';
-  const playerInputs=draft.names.slice(0,draft.mode==='solo'?1:draft.count).map((name,i)=>`<div class="player-identity"><label class="field"><span>${SUITS[i]} ${draft.mode==='solo'?'Your name':NAMES[i]}</span><input data-name="${i}" maxlength="24" value="${escapeHTML(name)}" autocomplete="off"></label><label class="field emoji-field"><span>Emoji</span><select data-emoji="${i}" aria-label="${escapeHTML(name)} emoji">${EMOJIS.map(emoji=>`<option value="${emoji}"${draft.emojis[i]===emoji?' selected':''}>${emoji}</option>`).join('')}</select></label></div>`).join('');
-  frame(`<div class="setup-heading"><button class="button ghost" data-action="setup-back">‹ Back</button><h1>New game</h1></div><section class="panel setup-panel"><p class="flavor">M’lord, our enemies are at the gates. We must prepare for war!</p><div class="label">Mode</div><div class="actions mode-actions">${modes.map(([mode,title])=>`<button class="button ${draft.mode===mode?'':'ghost'}" data-action="mode" data-value="${mode}">${title}</button>`).join('')}</div><div class="label">Battle lines</div><div class="actions mode-actions">${layouts.map(([layout,title])=>`<button class="button ${draft.layout===layout?'':'ghost'}" data-action="layout" data-value="${layout}">${title}</button>`).join('')}</div>${difficulty}${royalRules}<div class="label">${draft.mode==='solo'?'Computer opponents':'Players'}</div><div class="actions">${[2,3,4].map(n=>`<button class="button ${draft.count===n?'':'ghost'}" data-action="count" data-value="${n}">${draft.mode==='solo'?n-1:n}</button>`).join('')}</div><div class="stack" style="margin-top:18px">${playerInputs}</div>${draft.mode==='text'?`<p class="small muted">Name every player now. Send each their private invite on the next screen, then declare war to arrange your own lines. Links discourage casual peeking but are not cheat-proof.</p>`:''}<button class="button wide begin-game" data-action="start">${draft.mode==='text'?'Prepare invitations →':'Begin the war →'}</button></section>`);
+  const identityInput=i=>`<div class="player-identity"><label class="field"><span>${i===0?'Your name · tap to change':`${NAMES[i]} · suggested name`}</span><input data-name="${i}" maxlength="24" value="${escapeHTML(draft.names[i])}" autocomplete="off"></label><label class="field emoji-field"><span>Emoji</span><select data-emoji="${i}" aria-label="${escapeHTML(draft.names[i])} emoji">${EMOJIS.map(emoji=>`<option value="${emoji}"${draft.emojis[i]===emoji?' selected':''}>${emoji}</option>`).join('')}</select></label></div>`;
+  const otherInputs=draft.mode==='solo'?'':draft.names.slice(1,draft.count).map((_,i)=>identityInput(i+1)).join('');
+  frame(`<div class="setup-heading"><button class="button ghost" data-action="setup-back">‹ Back</button><h1>New game</h1></div><section class="panel setup-panel"><p class="flavor">M’lord, our enemies are at the gates. We must prepare for war!</p><div class="label">Your banner</div>${identityInput(0)}<div class="label">Mode</div><div class="actions mode-actions">${modes.map(([mode,title])=>`<button class="button ${draft.mode===mode?'':'ghost'}" data-action="mode" data-value="${mode}">${title}</button>`).join('')}</div><div class="label">Battle lines</div><div class="actions mode-actions">${layouts.map(([layout,title])=>`<button class="button ${draft.layout===layout?'':'ghost'}" data-action="layout" data-value="${layout}">${title}</button>`).join('')}</div>${difficulty}${royalRules}<div class="label">${draft.mode==='solo'?'Computer opponents':'Players'}</div><div class="actions">${[2,3,4].map(n=>`<button class="button ${draft.count===n?'':'ghost'}" data-action="count" data-value="${n}">${draft.mode==='solo'?n-1:n}</button>`).join('')}</div>${otherInputs?`<div class="stack" style="margin-top:18px">${otherInputs}</div><p class="small muted">These are suggestions. Each player chooses their own name and emoji before setting up their lines.</p>`:''}${draft.mode==='text'?`<p class="small muted">Send each player their private invite on the next screen, then declare war. Links discourage casual peeking but are not cheat-proof.</p>`:''}<button class="button wide begin-game" data-action="start">${draft.mode==='text'?'Prepare invitations →':'Begin the war →'}</button></section>`);
+}
+function renderFirstIdentity(){
+  const p=player(game.setup);
+  frame(`<section class="panel identity-gate"><div class="phase">Your first turn · ${SUITS[game.setup]} kingdom</div><h1>Choose your banner</h1><p class="muted">${game.mode==='text'?'The host suggested a name and emoji. Make them yours before you set your lines. Your choice travels with the next game link.':'Make this kingdom your own before setting your lines. Pass the phone in private.'}</p><div class="player-identity"><label class="field"><span>Your name</span><input data-claim-name maxlength="24" value="${escapeHTML(p.name)}" autocomplete="off"></label><label class="field emoji-field"><span>Emoji</span><select data-claim-emoji aria-label="Your emoji">${EMOJIS.map(emoji=>`<option value="${emoji}"${p.emoji===emoji?' selected':''}>${emoji}</option>`).join('')}</select></label></div><button class="button wide" data-action="claim-identity">Set up battle lines →</button></section>`);
 }
 function renderVeil() {
   const index = game.phase === 'setup' ? game.setup : game.phase === 'refill' ? game.refill[game.refillIndex] : game.phase === 'queen' ? game.pending.defender : game.turn;
@@ -1077,6 +1090,7 @@ function render() {
   if (!game) return setupOpen?renderSetup():renderStart();
   if(game.phase==='invite')return renderTextInvites();
   if(game.mode==='text'&&textAccess()!==game.turn&&game.phase!=='victory')return renderTextWaiting();
+  if(needsFirstIdentity())return renderFirstIdentity();
   if (game.phase === 'victory') return renderVictory();
   if (game.phase === 'stalemate') return renderStalemate();
   if (game.view === null) {
@@ -1586,6 +1600,18 @@ app.addEventListener('click', event => {
   if (action==='layout') { draft.layout=button.dataset.value==='classic'?'classic':'expanded'; render(); return; }
   if (action==='start') { rememberPlayerName(draft.names[0]);rememberPlayerEmoji(draft.emojis[0]);clearLinkError(); return commit(newGame); }
   if (action==='declare-war'&&game?.mode==='text'&&game.phase==='invite'&&textAccess()===0) return commit(()=>{game.phase='setup';game.view=0;});
+  if(action==='claim-identity'&&needsFirstIdentity()){
+    const seat=game.setup;
+    const name=(app.querySelector('[data-claim-name]')?.value??player(seat).name).trim().slice(0,24)||`Player ${seat+1}`;
+    const proposed=app.querySelector('[data-claim-emoji]')?.value??player(seat).emoji;
+    const emoji=EMOJIS.includes(proposed)?proposed:player(seat).emoji;
+    if(commit(()=>{player(seat).name=name;player(seat).emoji=emoji;game.view=seat;})){
+      try{localStorage.setItem(identityKey(game.matchId,seat),'1');}catch{}
+      rememberPlayerName(name);rememberPlayerEmoji(emoji);draft.names[0]=name;draft.emojis[0]=emoji;render();
+    }
+    return;
+  }
+  if(needsFirstIdentity())return;
   if (action==='bolster' && game && ['setup','buy','arrange'].includes(game.phase)) {
     const owner=game.phase==='setup'?game.setup:game.turn;
     return commit(()=>bolsterLines(owner));
