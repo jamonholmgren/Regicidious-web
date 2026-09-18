@@ -7,9 +7,11 @@
 .arena-opponent,.arena-self{min-height:0;flex:1;display:flex;flex-direction:column;justify-content:center;gap:2px}
 .arena-hud{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:.77rem;line-height:1.15;color:#f5dfb1;min-height:19px;max-width:330px;width:100%;margin:0 auto}
 .arena-hud span{color:#aec7b9;white-space:nowrap;font-size:.72rem}
-.opponent-switch{display:flex;align-items:center;min-width:0;gap:5px}
-.opponent-switch strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.opponent-switch button{border:1px solid #779383;border-radius:8px;background:#1a3a30;color:#f5dfb1;font-size:1.1rem;line-height:1;width:28px;height:26px;flex:0 0 auto}
+.opponent-switch{display:flex;align-items:center;min-width:0;gap:5px;flex:1}
+.opponent-switch strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.opponent-emojis{display:flex;gap:3px;margin-left:auto;flex:0 0 auto}
+.opponent-emojis button{border:1px solid #779383;border-radius:8px;background:#1a3a30;color:#f5dfb1;font-size:1rem;line-height:1;width:30px;height:29px;flex:0 0 auto;padding:0}
+.opponent-emojis button.active{border-color:#e9be74;background:#765f38}
 .opponent-chips{display:flex;max-width:330px;width:100%;margin:0 auto;gap:5px;overflow-x:auto;scrollbar-width:none}
 .opponent-chips::-webkit-scrollbar{display:none}
 .opponent-chip{border:1px solid #577365;background:#102a23;color:#dbe7d7;border-radius:100px;padding:3px 8px;font-size:.68rem;white-space:nowrap;min-height:24px}

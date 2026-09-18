@@ -6,21 +6,29 @@ const ACCESS_PREFIX = 'regicidious.access.';
 const DELETED_PREFIX = 'regicidious.deleted.';
 const ACTIVE_KEY = 'regicidious.active';
 const PLAYER_NAME_KEY = 'regicidious.player-name';
+const PLAYER_EMOJI_KEY = 'regicidious.player-emoji';
 const MIGRATED_KEY = 'regicidious.legacy-imported';
 const SUITS = ['♠', '♥', '♣', '♦'];
 const NAMES = ['Spades', 'Hearts', 'Clubs', 'Diamonds'];
 const RANKS = ['A','2','3','4','5','6','7','8','9','10','J','Q','K'];
+const EMOJIS = StateCodec.emojis;
 const app = document.querySelector('#app');
 let game = null;
 let slotId=null,hubOpen=false;
 let storageError = '';
-let draft = { mode:'solo',count:2, layout:'expanded',difficulty:'captain', names: ['You','Crimson Court','Iron Court','Ember Court'] };
+let draft = { mode:'solo',count:2, layout:'expanded',difficulty:'captain', names: ['You','Crimson Court','Iron Court','Ember Court'],emojis:EMOJIS.slice(0,4) };
 try {
   const rememberedName=localStorage.getItem(PLAYER_NAME_KEY);
   if(rememberedName!=null&&rememberedName.trim())draft.names[0]=rememberedName.slice(0,24);
+  const rememberedEmoji=localStorage.getItem(PLAYER_EMOJI_KEY);
+  if(EMOJIS.includes(rememberedEmoji))draft.emojis[0]=rememberedEmoji;
 } catch { /* The game remains usable if preferences cannot be read. */ }
 function rememberPlayerName(name) {
   try { localStorage.setItem(PLAYER_NAME_KEY,String(name).slice(0,24)); }
+  catch { /* Saving a preference must not block a game move. */ }
+}
+function rememberPlayerEmoji(emoji) {
+  try { localStorage.setItem(PLAYER_EMOJI_KEY,emoji); }
   catch { /* Saving a preference must not block a game move. */ }
 }
 let timings = {logic:0,save:0,render:0};
@@ -148,6 +156,11 @@ function validateState(saved) {
   if(!Number.isInteger(saved.refillIndex)||saved.refillIndex<0||saved.refillIndex>saved.refill.length||saved.phase==='refill'&&saved.refillIndex>=saved.refill.length)bad();
   if(typeof saved.message!=='string'||saved.message.length>2048||!Array.isArray(saved.log)||saved.log.length>1000||saved.log.some(s=>typeof s!=='string'||s.length>2048))bad();
   saved.matchId??='';saved.turnNumber??=1;saved.currentBattles??=[];saved.lastBattles??=[];saved.history??=null;saved.startedAt??=0;
+  saved.restoreNotices??=[];
+  if(!Array.isArray(saved.restoreNotices)||saved.restoreNotices.length>count||saved.restoreNotices.length&&saved.mode!=='text'||
+    new Set(saved.restoreNotices.map(n=>n.seat)).size!==saved.restoreNotices.length||
+    saved.restoreNotices.some(n=>!validIndex(n.seat,count)||!['invite','backup'].includes(n.kind)||
+      !Number.isInteger(n.turnNumber)||n.turnNumber<1||n.turnNumber>saved.turnNumber))bad();
   if(!Number.isInteger(saved.startedAt)||saved.startedAt<0||saved.startedAt>4e12)bad();
   if(typeof saved.matchId!=='string'||saved.matchId&&!/^[a-f0-9]{32}$/.test(saved.matchId)||saved.mode==='text'&&!saved.matchId||!Number.isInteger(saved.turnNumber)||saved.turnNumber<1||saved.turnNumber>1000000)bad();
   for(const events of [saved.currentBattles,saved.lastBattles]){
@@ -162,6 +175,8 @@ function validateState(saved) {
   }
   saved.players.forEach((p,i)=>{
     p.persona??=p.cpu?'captain':null;
+    p.emoji??=EMOJIS[i];
+    if(!EMOJIS.includes(p.emoji))bad();
     if(p.persona!=null&&!['serf','captain','warlord'].includes(p.persona))bad();
     if(p?.suit!==i||typeof p.name!=='string'||p.name.length>128||typeof p.alive!=='boolean'||typeof p.cpu!=='boolean'||!Number.isInteger(p.coins)||p.coins<0||p.coins>10000)bad();
     if(!Array.isArray(p.front)||p.front.length!==cols||!Array.isArray(p.back)||p.back.length!==cols||!Array.isArray(p.reserve)||!Array.isArray(p.deck))bad();
@@ -265,10 +280,15 @@ function lastBattleSentence(saved) {
   if(!events.length)return 'The last turn ended without a battle.';
   return events.map((e,i)=>`${i?'Meanwhile, ':''}${battleSentence(saved,e)}`).join(' ');
 }
+function restoreNoticeText(saved,viewer=saved.turn) {
+  return (saved.restoreNotices||[]).filter(alert=>alert.seat!==viewer).map(alert=>
+    `${saved.players[alert.seat].name} rejoined from ${alert.kind==='invite'?'an invite':'a backup'} before their last move. This is a heads-up, not proof of cheating.`).join(' ');
+}
 function shareMessage(saved,url) {
-  if(saved.phase==='victory')return `${saved.players.find(p=>p.alive)?.name||'A kingdom'} wins Regicidious! ${lastBattleSentence(saved)} ${url}`;
-  if(saved.phase==='setup')return `${saved.players[saved.turn].name}, the enemy is at the gates! Set your battle lines in Regicidious. ${url}`;
-  return `${lastBattleSentence(saved)} ${saved.players[saved.turn].name}, it’s your turn #${saved.turnNumber}. To arms! ${url}`;
+  const notice=restoreNoticeText(saved);
+  if(saved.phase==='victory')return `${saved.players.find(p=>p.alive)?.name||'A kingdom'} wins Regicidious! ${lastBattleSentence(saved)} ${notice?`${notice} `:''}${url}`;
+  if(saved.phase==='setup')return `${saved.players[saved.turn].name}, the enemy is at the gates! Set your battle lines in Regicidious. ${notice?`${notice} `:''}${url}`;
+  return `${lastBattleSentence(saved)} ${saved.players[saved.turn].name}, it’s your turn #${saved.turnNumber}. To arms! ${notice?`${notice} `:''}${url}`;
 }
 function ensureTurnLink() {
   if(!game||game.mode!=='text')return;
@@ -367,23 +387,24 @@ function newGame() {
     if(layout==='classic'){
       const six = [`${i}-K`,`${i}-Q`,`${i}-J`,...pool.splice(0,3)];
       pool.sort((a,b)=>RANKS.indexOf(rank(a))-RANKS.indexOf(rank(b)));
-      const p={ name:draft.names[i].trim() || `Player ${i+1}`, suit:i, cpu:draft.mode==='solo' && i!==0, persona:draft.mode==='solo'&&i!==0?draft.difficulty:null, front:[six[1],six[2],six[3]], back:[six[0],six[4],six[5]], reserve:[], deck:pool, coins:0, alive:true };
+      const p={ name:draft.names[i].trim() || `Player ${i+1}`, emoji:draft.emojis[i], suit:i, cpu:draft.mode==='solo' && i!==0, persona:draft.mode==='solo'&&i!==0?draft.difficulty:null, front:[six[1],six[2],six[3]], back:[six[0],six[4],six[5]], reserve:[], deck:pool, coins:0, alive:true };
       if (p.cpu) arrangeAI(p);
       return p;
     }
     const seven = [`${i}-K`,`${i}-Q`,`${i}-J`,...pool.splice(0,4)];
     pool.sort((a,b)=>RANKS.indexOf(rank(a))-RANKS.indexOf(rank(b)));
-    const p={ name:draft.names[i].trim() || `Player ${i+1}`, suit:i, cpu:draft.mode==='solo' && i!==0, persona:draft.mode==='solo'&&i!==0?draft.difficulty:null, front:[seven[1],seven[2],seven[3],seven[4]], back:[seven[0],seven[5],seven[6],null], reserve:[], deck:pool, coins:0, alive:true };
+    const p={ name:draft.names[i].trim() || `Player ${i+1}`, emoji:draft.emojis[i], suit:i, cpu:draft.mode==='solo' && i!==0, persona:draft.mode==='solo'&&i!==0?draft.difficulty:null, front:[seven[1],seven[2],seven[3],seven[4]], back:[seven[0],seven[5],seven[6],null], reserve:[], deck:pool, coins:0, alive:true };
     if (p.cpu) arrangeAI(p);
     return p;
   });
-  game = {version:1,layout,queenRule:'cedric',mode:draft.mode,players,turn:0,round:1,phase:'setup',setup:0,view:draft.mode==='text'?0:null,selection:null,attacks:0,usedAttacker:null,scout:null,kills:0,pending:null,refill:[],refillIndex:0,refillUndo:[],matchId:makeMatchId(),turnNumber:1,currentBattles:[],lastBattles:[],message:'',log:[],history:null,startedAt:Math.floor(Date.now()/1000)*1000};
+  game = {version:1,layout,queenRule:'cedric',mode:draft.mode,players,turn:0,round:1,phase:'setup',setup:0,view:draft.mode==='text'?0:null,selection:null,attacks:0,usedAttacker:null,scout:null,kills:0,pending:null,refill:[],refillIndex:0,refillUndo:[],matchId:makeMatchId(),turnNumber:1,currentBattles:[],lastBattles:[],message:'',log:[],history:null,startedAt:Math.floor(Date.now()/1000)*1000,restoreNotices:[]};
   game.history={origin:captureOrigin(game),events:[]};
   if(draft.mode==='text')game.phase='invite';
   if(draft.mode==='text') persistSeat(game.matchId,0);
   navigator.storage?.persist?.().catch(() => {});
 }
 function advanceTurn() {
+  game.restoreNotices=game.restoreNotices.filter(alert=>alert.seat===game.turn);
   const alive = living();
   if (alive.length <= 1) { game.phase = 'victory'; game.view = null; return; }
   const next = alive.find(i => i > game.turn) ?? alive[0];
@@ -410,7 +431,7 @@ function frame(content,compact=false) {
   app.innerHTML = `<main class="app ${compact?'compact-app':''}"><header class="top ${compact?'compact-top':''}"><div class="brand">♛ Regicidious</div><div class="top-actions">${compact?`<button class="pill" data-action="toggle-sheet" aria-label="Game details">☰</button>`:''}<button class="pill" data-action="games">Games</button></div></header>${storageError?`<div class="status" role="alert">${storageError}</div>`:''}${backupError?`<div class="status" role="alert">${backupError}</div>`:''}${content}${!compact&&!game&&!hubOpen&&!incomingBackup?pastePanel():''}${compact?'':backup+credit}</main>`;
 }
 function slotCard({id,game:g,dates}, finished) {
-  const roster=g.players.map(p=>p.name).join(' vs ');
+  const roster=g.players.map(p=>`${p.emoji} ${p.name}`).join(' vs ');
   const started=dates.started||g.startedAt||0;
   const turn=finished?'Battle ended':g.phase==='invite'?'Inviting kingdoms':g.phase==='setup'?`${g.players[g.setup].name} sets their lines`:`${g.players[g.turn].name} to move`;
   const clashes=g.lastBattles?.length?`<p class="game-clashes">${escapeHTML(lastBattleSentence(g))}</p>`:'';
@@ -427,7 +448,7 @@ function renderHub() {
   frame(`<section class="hero"><div class="crown">♛</div><h1>Your games</h1><p>Active matches stay here until you delete them.</p></section>${hubNotice?`<p class="status">${escapeHTML(hubNotice)}</p>`:''}${active.map(s=>slotCard(s,false)).join('')||'<p class="muted">No games in progress.</p>'}<div class="actions">${done.length?`<button class="button secondary wide" data-action="completed-games">Completed games</button>`:''}<button class="button secondary wide" data-action="new-game">Start another game</button></div>${pastePanel()}`);
 }
 function playerChips(saved) {
-  return `<div class="dispatch-seats">${saved.players.map((p,i)=>`<span class="suit-chip">${SUITS[i]} ${escapeHTML(p.name)}</span>`).join('')}</div>`;
+  return `<div class="dispatch-seats">${saved.players.map((p,i)=>`<span class="suit-chip">${p.emoji} ${SUITS[i]} ${escapeHTML(p.name)}</span>`).join('')}</div>`;
 }
 function renderImport() {
   const g=incomingBackup, victory=g.phase==='victory', invitation=g.phase==='invite', turn=incomingKind==='turn';
@@ -439,7 +460,8 @@ function renderImport() {
   const body=victory?'Open to watch the final clash and the result. Your other saved games stay on this device.':invitation?'Claim your kingdom now. Your battle lines open when the host declares war and sends the next link.':turn?'Open to replay the last fights and continue if this seat is yours. Your other saved games stay on this device.':'Restoring adds another saved game. Your current games remain untouched.';
   const go=victory?'View final clash':invitation?'Claim my seat':turn?'Open turn & replay':'Add backup';
   const progress=invitation?`${g.players.length} kingdoms gather`:g.phase==='setup'?`Battle lines · ${g.setup+1} of ${g.players.length}`:`Round ${g.round} · turn #${g.turnNumber}`;
-  frame(`<section class="panel dispatch"><div class="phase">${title}</div><h2>${headline}</h2><p class="muted">${progress}</p>${playerChips(g)}<p class="muted small">Started ${escapeHTML(started)}</p><p class="small">${body}</p><div class="actions"><button class="button" data-action="restore-backup">${go}</button></div></section>`);
+  const notice=restoreNoticeText(g);
+  frame(`<section class="panel dispatch"><div class="phase">${title}</div><h2>${headline}</h2><p class="muted">${progress}</p>${playerChips(g)}<p class="muted small">Started ${escapeHTML(started)}</p><p class="small">${body}</p>${notice?`<p class="status">${escapeHTML(notice)}</p>`:''}<div class="actions"><button class="button" data-action="restore-backup">${go}</button></div></section>`);
 }
 function renderTextWaiting() {
   ensureTurnLink();
@@ -447,7 +469,7 @@ function renderTextWaiting() {
   const p=player(game.turn);
   const invites=textAccess()===0?`<section class="panel"><h2>Invite players to their own seats</h2><p class="small muted">Send each player only their named invite once. Invites bind their device to that seat, even before their first turn.</p>${game.players.map((q,i)=>i===0?'':`<p>${escapeHTML(q.name)} ${SUITS[i]}</p>${inviteLinks[i]?.url?`<div class="actions"><button class="button secondary" data-action="copy-invite" data-index="${i}">Copy invite</button><button class="button secondary" data-action="share-invite" data-index="${i}">Share…</button></div><textarea readonly rows="2">${escapeHTML(inviteLinks[i].url)}</textarea>`:'<p class="small muted">Preparing invite…</p>'}`).join('')}</section>`:'';
   const settingUp=game.phase==='setup';
-  const summary=`<section class="waiting-summary"><div class="crown">${SUITS[game.turn]}</div><div><div class="phase">${settingUp?`Battle lines · ${game.setup+1} of ${game.players.length}`:`Text multiplayer · turn #${game.turnNumber}`}</div><h1>${escapeHTML(p.name)}’s ${settingUp?'battle lines':'turn'}</h1><p>Send the next link to ${escapeHTML(p.name)}. Your copy waits here.</p></div></section>`;
+  const summary=`<section class="waiting-summary"><div class="crown">${p.emoji}</div><div><div class="phase">${settingUp?`Battle lines · ${game.setup+1} of ${game.players.length}`:`Text multiplayer · turn #${game.turnNumber}`}</div><h1>${escapeHTML(p.name)}’s ${settingUp?'battle lines':'turn'}</h1><p>Send the next link to ${escapeHTML(p.name)}. Your copy waits here.</p></div></section>`;
   const actions=turnLink?`<div class="actions"><button class="button" data-action="copy-turn">Copy message</button><button class="button secondary" data-action="share-turn">Send text to ${escapeHTML(p.name)}</button></div><details class="share-detail"><summary>Show message and link</summary><textarea readonly rows="5" aria-label="Message and link">${escapeHTML(shareMessage(game,turnLink))}</textarea></details>`:'<p class="muted small">Preparing a private turn link…</p>';
   const dispatch=`<section class="panel waiting-panel"><h2>${settingUp?'Send the setup':'Send the turn'}</h2>${settingUp?'':`<p class="muted small">${escapeHTML(lastBattleSentence(game))}</p>`}${replayLastButton()}${turnLinkError?`<p class="status">${escapeHTML(turnLinkError)}</p>`:''}${actions}<p class="muted small">The link contains the whole match and a key. Keep it in your game group; it deters casual peeking but cannot prevent cheating.</p></section>`;
   frame(`${summary}${dispatch}${invites}${pastePanel()}`);
@@ -460,7 +482,7 @@ function renderTextInvites() {
   ensureInvites();
   const seats=game.players.slice(1).map((p,i)=>{
     const seat=i+1,link=inviteLinks[seat]?.url;
-    return `<div class="invite-seat"><h3>${SUITS[seat]} ${escapeHTML(p.name)}</h3>${link?`<div class="actions"><button class="button secondary" data-action="copy-invite" data-index="${seat}">Copy invite</button><button class="button secondary" data-action="share-invite" data-index="${seat}">Share invite</button></div>`:'<p class="muted small">Preparing a private invitation…</p>'}</div>`;
+    return `<div class="invite-seat"><h3>${p.emoji} ${SUITS[seat]} ${escapeHTML(p.name)}</h3>${link?`<div class="actions"><button class="button secondary" data-action="copy-invite" data-index="${seat}">Copy invite</button><button class="button secondary" data-action="share-invite" data-index="${seat}">Share invite</button></div>`:'<p class="muted small">Preparing a private invitation…</p>'}</div>`;
   }).join('');
   frame(`<section class="panel dispatch"><div class="phase">Gather your kingdoms</div><h1>Send the royal invitations</h1><p>Each player needs their own named invite to claim a seat. Send these before declaring war.</p>${seats}<p class="flavor">The gauntlet has been thrown down.</p><button class="button wide" data-action="declare-war">Declare war!</button></section>`);
 }
@@ -474,13 +496,14 @@ function renderSetup() {
   const layouts=[['expanded','Expanded · 4 across, 7 cards'],['classic','Classic · 3 across, 6 cards']];
   const royalRules=`<p class="small muted">The first commander gets one opening attack. Later turns allow two attacks with different cards. A neighboring peasant lends the Queen a die when she attacks and falls in her place if she loses. When the King defends, a neighboring peasant takes a winning hit for him. The weakest adjacent peasant falls first.</p>`;
   const difficulty=draft.mode==='solo'?`<div class="label">Enemy commander</div><div class="actions mode-actions">${[['serf','Serf · easy'],['captain','Captain · normal'],['warlord','Warlord · hard']].map(([id,title])=>`<button class="button ${draft.difficulty===id?'':'ghost'}" data-action="difficulty" data-value="${id}">${title}</button>`).join('')}</div><p class="small muted">Serf charges recklessly. Captain weighs the odds. Warlord guards the crown and picks fights carefully.</p>`:'';
-  frame(`<div class="setup-heading"><button class="button ghost" data-action="setup-back">‹ Back</button><h1>New game</h1></div><section class="panel setup-panel"><p class="flavor">M’lord, our enemies are at the gates. We must prepare for war!</p><div class="label">Mode</div><div class="actions mode-actions">${modes.map(([mode,title])=>`<button class="button ${draft.mode===mode?'':'ghost'}" data-action="mode" data-value="${mode}">${title}</button>`).join('')}</div><div class="label">Battle lines</div><div class="actions mode-actions">${layouts.map(([layout,title])=>`<button class="button ${draft.layout===layout?'':'ghost'}" data-action="layout" data-value="${layout}">${title}</button>`).join('')}</div>${difficulty}${royalRules}<div class="label">${draft.mode==='solo'?'Computer opponents':'Players'}</div><div class="actions">${[2,3,4].map(n=>`<button class="button ${draft.count===n?'':'ghost'}" data-action="count" data-value="${n}">${draft.mode==='solo'?n-1:n}</button>`).join('')}</div><div class="stack" style="margin-top:18px">${draft.names.slice(0,draft.mode==='solo'?1:draft.count).map((name,i)=>`<label class="field"><span>${SUITS[i]} ${draft.mode==='solo'?'Your name':NAMES[i]}</span><input data-name="${i}" maxlength="24" value="${escapeHTML(name)}" autocomplete="off"></label>`).join('')}</div>${draft.mode==='text'?`<p class="small muted">Name every player now. Send each their private invite on the next screen, then declare war to arrange your own lines. Links discourage casual peeking but are not cheat-proof.</p>`:''}<button class="button wide begin-game" data-action="start">${draft.mode==='text'?'Prepare invitations →':'Begin the war →'}</button></section>`);
+  const playerInputs=draft.names.slice(0,draft.mode==='solo'?1:draft.count).map((name,i)=>`<div class="player-identity"><label class="field"><span>${SUITS[i]} ${draft.mode==='solo'?'Your name':NAMES[i]}</span><input data-name="${i}" maxlength="24" value="${escapeHTML(name)}" autocomplete="off"></label><label class="field emoji-field"><span>Emoji</span><select data-emoji="${i}" aria-label="${escapeHTML(name)} emoji">${EMOJIS.map(emoji=>`<option value="${emoji}"${draft.emojis[i]===emoji?' selected':''}>${emoji}</option>`).join('')}</select></label></div>`).join('');
+  frame(`<div class="setup-heading"><button class="button ghost" data-action="setup-back">‹ Back</button><h1>New game</h1></div><section class="panel setup-panel"><p class="flavor">M’lord, our enemies are at the gates. We must prepare for war!</p><div class="label">Mode</div><div class="actions mode-actions">${modes.map(([mode,title])=>`<button class="button ${draft.mode===mode?'':'ghost'}" data-action="mode" data-value="${mode}">${title}</button>`).join('')}</div><div class="label">Battle lines</div><div class="actions mode-actions">${layouts.map(([layout,title])=>`<button class="button ${draft.layout===layout?'':'ghost'}" data-action="layout" data-value="${layout}">${title}</button>`).join('')}</div>${difficulty}${royalRules}<div class="label">${draft.mode==='solo'?'Computer opponents':'Players'}</div><div class="actions">${[2,3,4].map(n=>`<button class="button ${draft.count===n?'':'ghost'}" data-action="count" data-value="${n}">${draft.mode==='solo'?n-1:n}</button>`).join('')}</div><div class="stack" style="margin-top:18px">${playerInputs}</div>${draft.mode==='text'?`<p class="small muted">Name every player now. Send each their private invite on the next screen, then declare war to arrange your own lines. Links discourage casual peeking but are not cheat-proof.</p>`:''}<button class="button wide begin-game" data-action="start">${draft.mode==='text'?'Prepare invitations →':'Begin the war →'}</button></section>`);
 }
 function renderVeil() {
   const index = game.phase === 'setup' ? game.setup : game.phase === 'refill' ? game.refill[game.refillIndex] : game.phase === 'queen' ? game.pending.defender : game.turn;
   const text = game.phase === 'setup' ? 'M’lord, our enemies are at the gates. We must prepare for war!' : game.phase === 'refill' ? 'Fill any front-line gaps in private.' : game.phase === 'queen' ? 'Your Queen sacrifices the weakest adjacent peasant.' : 'Your kingdom is waiting.';
   const solo=game.mode==='solo';
-  frame(`<section class="veil"><div><div class="crown">${SUITS[index]}</div><div class="phase">${solo?'Your kingdom':'Pass the phone'}</div><h1>${escapeHTML(player(index).name)}</h1><p>${text}${solo?'':'<br>Make sure only this player can see the screen.'}</p><div class="actions"><button class="button wide" data-action="reveal">${game.phase==='setup'?'Set up battle lines →':solo?'Continue →':`I’m ${escapeHTML(player(index).name)} — reveal`}</button></div></div></section>`);
+  frame(`<section class="veil"><div><div class="crown">${player(index).emoji}</div><div class="phase">${solo?'Your kingdom':'Pass the phone'}</div><h1>${escapeHTML(player(index).name)}</h1><p>${text}${solo?'':'<br>Make sure only this player can see the screen.'}</p><div class="actions"><button class="button wide" data-action="reveal">${game.phase==='setup'?'Set up battle lines →':solo?'Continue →':`I’m ${escapeHTML(player(index).name)} — reveal`}</button></div></div></section>`);
 }
 function renderBoard(index, mode) {
   const p = player(index);
@@ -513,8 +536,9 @@ function arenaRow(owner,row,own,mode,visual) {
 function arenaDetails() {
   if(!sheetOpen)return '';
   const share=game.mode==='text'?`<p class="small muted">Turn #${game.turnNumber}: ${escapeHTML(player(game.turn).name)}</p>${replayLastButton()}<p class="small muted">Finish your turn to create the next player's link.</p>`:'';
+  const notice=game.mode==='text'?restoreNoticeText(game,textAccess()):'';
   const backup=`<button class="button secondary wide" data-action="backup">Make Backup</button>${backupForSlot===slotId&&backupText?`<textarea readonly rows="3">${escapeHTML(backupText)}</textarea><button class="button secondary" data-action="copy-backup">Copy backup link</button>`:''}`;
-  return `<div class="sheet-scrim" data-action="toggle-sheet"></div><section class="arena-sheet" role="dialog" aria-label="Game details"><div class="row"><h3>Game details</h3><button class="button ghost" data-action="toggle-sheet">Close</button></div><p class="muted small">Round ${game.round} · ${escapeHTML(player(game.turn).name)} · ${escapeHTML(game.phase)}</p><p class="small">${escapeHTML(game.message||'Tap a card to select it. The highest individual die wins.')}</p>${game.log?.length?`<div class="small muted">${game.log.slice(-6).reverse().map(item=>`<p>${escapeHTML(item)}</p>`).join('')}</div>`:''}${share}${backup}<p class="small muted">Game by Shane Holmgren · Digital adaptation by Jamon Holmgren, <a href="https://jammin.games/" target="_blank" rel="noopener noreferrer">Jammin Games</a>.</p><p class="small muted">Last move: logic ${micro(timings.logic)} · save ${micro(timings.save)} · UI ${micro(timings.render)}.</p></section>`;
+  return `<div class="sheet-scrim" data-action="toggle-sheet"></div><section class="arena-sheet" role="dialog" aria-label="Game details"><div class="row"><h3>Game details</h3><button class="button ghost" data-action="toggle-sheet">Close</button></div><p class="muted small">Round ${game.round} · ${escapeHTML(player(game.turn).name)} · ${escapeHTML(game.phase)}</p>${notice?`<p class="status">${escapeHTML(notice)}</p>`:''}<p class="small">${escapeHTML(game.message||'Tap a card to select it. The highest individual die wins.')}</p>${game.log?.length?`<div class="small muted">${game.log.slice(-6).reverse().map(item=>`<p>${escapeHTML(item)}</p>`).join('')}</div>`:''}${share}${backup}<p class="small muted">Game by Shane Holmgren · Digital adaptation by Jamon Holmgren, <a href="https://jammin.games/" target="_blank" rel="noopener noreferrer">Jammin Games</a>.</p><p class="small muted">Last move: logic ${micro(timings.logic)} · save ${micro(timings.save)} · UI ${micro(timings.render)}.</p></section>`;
 }
 function arenaReserve(owner, visual) {
   const p=player(owner);
@@ -530,7 +554,8 @@ function renderArena(owner,mode,intro,controls,visual) {
   const opponent=visual?.opponent??(mode==='battle'&&game.pending?.defender!==owner?game.pending.defender:(candidates.includes(selectedOpponent)?selectedOpponent:candidates[0]));
   selectedOpponent=opponent;
   const target=opponent==null?null:player(opponent);
-  const switcher=(!visual||visual.revealAll&&!visual.source)&&candidates.length>1?`<div class="opponent-switch"><button data-action="opponent-nav" data-step="-1" aria-label="Previous opponent">‹</button><strong>${escapeHTML(target.name)} ${SUITS[opponent]}</strong><button data-action="opponent-nav" data-step="1" aria-label="Next opponent">›</button></div>`:`<strong>${target?`${escapeHTML(target.name)} ${SUITS[opponent]}`:'Your opponent'}</strong>`;
+  const chooseOpponent=!visual||visual.revealAll&&!visual.source&&visual.opponent==null;
+  const switcher=chooseOpponent&&candidates.length>1?`<div class="opponent-switch"><strong>${escapeHTML(target.name)} ${SUITS[opponent]}</strong><div class="opponent-emojis">${candidates.map(i=>`<button data-action="opponent" data-index="${i}" class="${i===opponent?'active':''}" aria-label="View ${escapeHTML(player(i).name)}" aria-pressed="${i===opponent}">${player(i).emoji}</button>`).join('')}</div></div>`:`<strong>${target?`${target.emoji} ${escapeHTML(target.name)} ${SUITS[opponent]}`:'Your opponent'}</strong>`;
   const prepareHint=(mode==='buy'||mode==='arrange')&&!visual?intro:null;
   const middleText=visual||mode==='refill'?intro:prepareHint?(game.message?`${game.message} ${intro}`:intro):(game.message||intro);
   let middle=`<div class="arena-instruction">${escapeHTML(middleText)}</div>`;
@@ -544,7 +569,7 @@ function renderArena(owner,mode,intro,controls,visual) {
   const seenReserve=visual?.revealAll&&target?.reserve?.length?`<div class="arena-row"><span class="arena-label">Reserve</span><div class="reserve">${target.reserve.map((id,i)=>cardHTML(id,'','reserve',i,{owner:opponent,row:'reserve'})).join('')}</div></div>`:'';
   const last=visual? '':replayLastButton(true);
   const attackStatus=['attack','battle','replay'].includes(mode)?` · ${game.attacks}/${attackLimit()} attacks`:'';
-  frame(`<section class="arena" aria-label="Battlefield"><div class="arena-opponent"><div class="arena-hud">${switcher}<span>${target?`${target.front.filter(Boolean).length+target.back.filter(Boolean).length} cards`:''}</span></div>${target?arenaRow(opponent,'back',false,mode,visual):''}${target?arenaRow(opponent,'front',false,mode,visual):''}${seenReserve}</div><div class="arena-middle">${middle}</div><div class="arena-self"><div class="arena-hud"><strong>${escapeHTML(own.name)} ${SUITS[owner]}</strong><span>◉ ${own.coins}${attackStatus}</span></div>${arenaRow(owner,'front',true,mode,visual)}${arenaRow(owner,'back',true,mode,visual)}${arenaReserve(owner,visual)}</div><div class="arena-dock ${visual?'replay-dock':''}${last?' with-last':''}">${controls}${last}</div></section>${arenaDetails()}`,true);
+  frame(`<section class="arena" aria-label="Battlefield"><div class="arena-opponent"><div class="arena-hud">${switcher}<span>${target?`${target.front.filter(Boolean).length+target.back.filter(Boolean).length} cards`:''}</span></div>${target?arenaRow(opponent,'back',false,mode,visual):''}${target?arenaRow(opponent,'front',false,mode,visual):''}${seenReserve}</div><div class="arena-middle">${middle}</div><div class="arena-self"><div class="arena-hud"><strong>${own.emoji} ${escapeHTML(own.name)} ${SUITS[owner]}</strong><span>◉ ${own.coins}${attackStatus}</span></div>${arenaRow(owner,'front',true,mode,visual)}${arenaRow(owner,'back',true,mode,visual)}${arenaReserve(owner,visual)}</div><div class="arena-dock ${visual?'replay-dock':''}${last?' with-last':''}">${controls}${last}</div></section>${arenaDetails()}`,true);
 }
 function renderPlay() {
   const p = player(game.turn);
@@ -1239,6 +1264,13 @@ app.addEventListener('input', event => {
     if(index===0)rememberPlayerName(event.target.value);
   }
 });
+app.addEventListener('change', event => {
+  const index=Number(event.target?.dataset?.emoji);
+  if(event.target?.dataset?.emoji!=null&&index>=0&&index<4&&EMOJIS.includes(event.target.value)){
+    draft.emojis[index]=event.target.value;
+    if(index===0)rememberPlayerEmoji(event.target.value);
+  }
+});
 app.addEventListener('click', event => {
   const button=event.target.closest('[data-action]');
   if(matchReplay) {
@@ -1249,13 +1281,13 @@ app.addEventListener('click', event => {
     if(action==='match-replay-prev'){matchReplay.autoplay=false;clearTimeout(matchReplayTimer);stepMatchReplay(-1);return;}
     if(action==='match-replay-next'){matchReplay.autoplay=false;clearTimeout(matchReplayTimer);stepMatchReplay(1);return;}
     if(action==='match-replay-auto'){toggleMatchReplayAuto();return;}
-    if(action==='opponent-nav' && game){
+    if(action==='opponent' && game){
       const step=matchReplay.frames[matchReplay.index];
       const owner=step.owner;
       const prevGame=game;game=step.state;
       try {
-        const candidates=living().filter(i=>i!==owner);
-        if(candidates.length>1){const current=Math.max(0,candidates.indexOf(selectedOpponent));selectedOpponent=candidates[(current+Number(button.dataset.step)+candidates.length)%candidates.length];}
+        const candidate=Number(button.dataset.index);
+        if(candidate!==owner&&living().includes(candidate))selectedOpponent=candidate;
       } finally {game=prevGame;}
       render();
       return;
@@ -1345,11 +1377,9 @@ app.addEventListener('click', event => {
   }
   if(action==='toggle-sheet') { sheetOpen=!sheetOpen;render();return; }
   if(action==='reserve') { reserveOpen=!reserveOpen;render();return; }
-  if(action==='opponent') { selectedOpponent=index;render();return; }
-  if(action==='opponent-nav') {
+  if(action==='opponent') {
     const owner=game.phase==='setup'?game.setup:game.phase==='refill'?game.refill[game.refillIndex]:game.turn;
-    const candidates=living().filter(i=>i!==owner);
-    if(candidates.length>1){const current=Math.max(0,candidates.indexOf(selectedOpponent));selectedOpponent=candidates[(current+Number(button.dataset.step)+candidates.length)%candidates.length];render();}
+    if(index!==owner&&living().includes(index)){selectedOpponent=index;render();}
     return;
   }
   if(action==='games') { stopMatchReplay();incomingRequest++;lastIncomingLocationHash='';incomingBackup=null;incomingKind=null;incomingSeat=null;linkLoading=false;backupError='';history.replaceState(null,'',location.pathname+location.search);hubOpen=true;completedOpen=false;sheetOpen=false;reserveOpen=false;backupText='';render();return; }
@@ -1389,7 +1419,7 @@ app.addEventListener('click', event => {
       }
     }
     if(existing){
-      const same=StateCodec.encode(existing.game,{history:false})===StateCodec.encode(restored,{history:false});
+      const same=StateCodec.encode({...existing.game,restoreNotices:[]},{history:false})===StateCodec.encode({...restored,restoreNotices:[]},{history:false});
       const setupForward=restored.turnNumber===1&&existing.game.turnNumber===1&&
         (existing.game.phase==='invite'&&(restored.phase==='setup'||restored.phase==='arrange')||
         existing.game.phase==='setup'&&(restored.phase==='setup'&&restored.setup>existing.game.setup||restored.phase==='arrange'&&restored.turn===0));
@@ -1401,7 +1431,12 @@ app.addEventListener('click', event => {
     }
     if(commit(()=>{
       const keep=(!restored.history?.origin && existing?.game.history?.origin)?existing.game.history:null;
+      const localNotices=kind==='turn'?existing?.game.restoreNotices?.filter(n=>n.seat===Number(recallSeat(restored.matchId)))||[]:[];
       game=restored;slotId=existing?.id??makeSlotId();backupText='';hubOpen=false;
+      if(localNotices.length)game.restoreNotices=[...game.restoreNotices.filter(n=>n.seat!==localNotices[0].seat),...localNotices];
+      if(restored.mode==='text'&&kind==='backup'&&seat!=null&&restored.phase!=='victory'){
+        game.restoreNotices=[...game.restoreNotices.filter(n=>n.seat!==seat),{seat,kind:restored.phase==='invite'?'invite':'backup',turnNumber:restored.turnNumber}];
+      }
       if(keep){
         game.history=keep;
         if(kind==='turn' && existing && restored.turnNumber>existing.game.turnNumber) record({t:'sync',origin:captureOrigin(restored)});
@@ -1422,7 +1457,7 @@ app.addEventListener('click', event => {
   if (action==='difficulty') { if(['serf','captain','warlord'].includes(button.dataset.value))draft.difficulty=button.dataset.value; render(); return; }
   if (action==='mode') { draft.mode=button.dataset.value; render(); return; }
   if (action==='layout') { draft.layout=button.dataset.value==='classic'?'classic':'expanded'; render(); return; }
-  if (action==='start') { rememberPlayerName(draft.names[0]);clearLinkError(); return commit(newGame); }
+  if (action==='start') { rememberPlayerName(draft.names[0]);rememberPlayerEmoji(draft.emojis[0]);clearLinkError(); return commit(newGame); }
   if (action==='declare-war'&&game?.mode==='text'&&game.phase==='invite'&&textAccess()===0) return commit(()=>{game.phase='setup';game.view=0;});
   if (action==='bolster' && game && ['setup','buy','arrange'].includes(game.phase)) {
     const owner=game.phase==='setup'?game.setup:game.turn;

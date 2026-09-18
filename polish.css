@@ -39,6 +39,8 @@ body{min-height:100dvh;overflow-x:hidden;overscroll-behavior:none}
 .setup-panel{margin-top:0}
 .setup-panel .label:first-child{margin-top:0}
 .begin-game{margin-top:22px}
+.player-identity{display:grid;grid-template-columns:minmax(0,1fr) 74px;gap:9px;align-items:end}
+.emoji-field select{width:100%;min-height:46px;border:1px solid #688276;border-radius:12px;background:#102a23;color:#fff;font-size:1.45rem;text-align:center}
 .notice a,.arena-sheet a{color:#f4d797;text-underline-offset:2px}
 .dispatch-seats{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}
 .suit-chip{display:inline-flex;align-items:center;gap:4px;border:1px solid #6f8c7c;border-radius:999px;padding:3px 9px;font-size:.78rem;color:#f3e6c4;background:#17352c}
