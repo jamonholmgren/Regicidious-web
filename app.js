@@ -447,7 +447,7 @@ function renderSetup() {
 }
 function renderVeil() {
   const index = game.phase === 'setup' ? game.setup : game.phase === 'refill' ? game.refill[game.refillIndex] : game.phase === 'queen' ? game.pending.defender : game.turn;
-  const text = game.phase === 'setup' ? 'M’lord, our enemies are at the gates. We must prepare for war! Set your lines in private.' : game.phase === 'refill' ? 'Fill any front-line gaps in private.' : game.phase === 'queen' ? 'Your Queen sacrifices the weakest adjacent peasant.' : 'Your kingdom is waiting.';
+  const text = game.phase === 'setup' ? 'M’lord, our enemies are at the gates. We must prepare for war!' : game.phase === 'refill' ? 'Fill any front-line gaps in private.' : game.phase === 'queen' ? 'Your Queen sacrifices the weakest adjacent peasant.' : 'Your kingdom is waiting.';
   const solo=game.mode==='solo';
   frame(`<section class="veil"><div><div class="crown">${SUITS[index]}</div><div class="phase">${solo?'Your kingdom':'Pass the phone'}</div><h1>${escapeHTML(player(index).name)}</h1><p>${text}${solo?'':'<br>Make sure only this player can see the screen.'}</p><div class="actions"><button class="button wide" data-action="reveal">${game.phase==='setup'?'Set up battle lines →':solo?'Continue →':`I’m ${escapeHTML(player(index).name)} — reveal`}</button></div></div></section>`);
 }
@@ -642,6 +642,7 @@ function advanceReplay() {
 }
 function renderPlayback() {
   const playback=computerPlayback,step=playback.frames[playback.index];
+  const holdForContinue=game.mode==='solo' && playback.index===playback.frames.length-1 && step.kind==='result';
   const finalGame=game;
   game=step.state;
   try {
@@ -671,14 +672,14 @@ function renderPlayback() {
       }
     }
     const visual={kind:step.kind,opponent:attacker,source,target,showTarget:step.kind!=='reveal',revealTarget:['roll','result'].includes(step.kind),showDice:['roll','result'].includes(step.kind),hideOwnOthers:playback.textReplay,loser,winner};
-    renderArena(owner,'replay',narration,`<div class="replay-narration" aria-live="polite">${escapeHTML(narration)}</div><button class="button secondary" data-action="replay-next">${playback.index===playback.frames.length-1?'Done':'Next'} →</button>`,visual);
+    renderArena(owner,'replay',narration,`<div class="replay-narration" aria-live="polite">${escapeHTML(narration)}</div><button class="button secondary" data-action="replay-next">${holdForContinue?'Continue':playback.index===playback.frames.length-1?'Done':'Next'} →</button>`,visual);
     if(step.kind==='roll')animateDice(b);
     if(step.kind==='result'){
       const faces=app.querySelectorAll('[data-dice-lane] .die');
       [...faces].forEach((face,i)=>{face.textContent=[...b.defendDice,...b.attackDice][i];});
     }
     clearTimeout(replayTimer);
-    replayTimer=setTimeout(advanceReplay,{reveal:600,target:650,roll:900,result:700}[step.kind]);
+    if(!holdForContinue)replayTimer=setTimeout(advanceReplay,{reveal:600,target:650,roll:900,result:700}[step.kind]);
   } finally {game=finalGame;}
 }
 function article(title) { return /^[AEIOU]/.test(title)?'an':'a'; }
@@ -912,7 +913,7 @@ function render() {
   if (game.phase === 'stalemate') return renderStalemate();
   if (game.view === null) {
     const idx=game.phase==='setup'?game.setup:game.turn;
-    if(['setup','arrange','buy'].includes(game.phase) && player(idx) && !player(idx).cpu) return renderVeil();
+    if(['setup','arrange','buy'].includes(game.phase) && player(idx) && !player(idx).cpu && (game.mode!=='solo'||game.phase==='setup')) return renderVeil();
     game.view=idx;
   }
   if (game.phase === 'setup') {
@@ -1193,6 +1194,7 @@ app.addEventListener('click', event => {
     const playing=button?.dataset.action;
     if(playing==='games') { clearTimeout(replayTimer);computerPlayback=null;hubOpen=true;render(); return; }
     if(playing==='keep-current'||playing==='restore-backup') { clearTimeout(replayTimer);computerPlayback=null; }
+    else if(game?.mode==='solo'&&computerPlayback.index===computerPlayback.frames.length-1&&computerPlayback.frames.at(-1)?.kind==='result'&&playing!=='replay-next')return;
     else { advanceReplay(); return; }
   }
   if (!button) return;
