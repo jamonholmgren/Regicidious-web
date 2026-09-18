@@ -1,0 +1,42 @@
+/* App-like scrolling and compact launch/setup screens. */
+html,body{height:100%;overflow:hidden;overscroll-behavior:none}
+.app{height:100dvh;overflow-y:auto;overscroll-behavior:none;-webkit-overflow-scrolling:touch}
+.compact-app{overflow:hidden}
+.arena-sheet{overscroll-behavior:contain}
+.launch{min-height:min(60dvh,500px);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center;padding:12px 8px}
+.launch-crown{font-size:3.6rem;line-height:1;color:#e9be74}
+.launch h1{font:normal clamp(2.1rem,9vw,3.8rem)/1.06 Georgia,serif;letter-spacing:-.055em;margin:0}
+.launch p{color:#b9cbc0;margin:0 0 12px;line-height:1.45}
+.launch .button{max-width:360px}
+.launch-start{font-size:1.1rem;min-height:56px}
+.install-tip{display:flex;gap:10px;align-items:flex-start;border:1px solid #708d7b;background:#214036;border-radius:15px;padding:12px;margin:8px 0 14px;color:#e5eee4}
+.install-tip strong{color:#f4d797}
+.install-tip p{font-size:.78rem;line-height:1.38;margin:3px 0 0}
+.tip-close{border:0;background:transparent;color:#d2e1d4;font-size:1.5rem;line-height:1;min-width:30px;min-height:30px}
+.compact-rules{margin-top:10px;font-size:.83rem}
+.compact-rules p{color:#bfd0c4;line-height:1.45}
+.flavor{font:italic 1rem Georgia,serif;color:#f0d49a;margin:0 0 12px;line-height:1.4}
+.setup-heading{display:flex;align-items:center;gap:14px;margin:8px 0 14px}
+.setup-heading h1{font:normal 2rem Georgia,serif;margin:0}
+.setup-panel{margin-top:0}
+.setup-panel .label:first-child{margin-top:0}
+.begin-game{margin-top:22px}
+.notice a,.arena-sheet a{color:#f4d797;text-underline-offset:2px}
+.dispatch-seats{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}
+.suit-chip{display:inline-flex;align-items:center;gap:4px;border:1px solid #6f8c7c;border-radius:999px;padding:3px 9px;font-size:.78rem;color:#f3e6c4;background:#17352c}
+/* Text/CSS-only cards: fixed geometry, stronger identity at small iPhone sizes. */
+.card:not(.back):not(.empty){background:linear-gradient(155deg,#fffaf0,#efe3ce);border-color:#d8c69f;box-shadow:inset 0 0 0 1px #fff8e8,0 2px 0 #10251e}
+.card:not(.back):not(.empty) .center{opacity:.24;font-size:clamp(2rem,8vw,3.6rem);line-height:1}
+.card .rank{position:relative;z-index:1;letter-spacing:-.05em}
+.card-role{position:absolute;bottom:8px;left:8px;font-size:.56rem;letter-spacing:.08em;font-weight:800;opacity:.72}
+.card.back{background:repeating-linear-gradient(45deg,#24463b 0 7px,#315849 7px 14px);box-shadow:inset 0 0 0 2px #1b3c31,0 2px 0 #10251e}
+.card.back .center{font-size:clamp(2rem,7vw,3rem);opacity:.75;text-shadow:0 1px 0 #f8e0a4}
+.card.selected::after{content:'✓';position:absolute;right:7px;top:4px;color:#b88432;font-weight:900;font-size:1rem}
+.card.buy-armed{border-color:#f0c478;background:#e9be7433;color:#ffe4a8;font-size:.8rem;font-weight:800;outline:2px solid #f0c478;outline-offset:1px}
+.arena-row .card:not(.back):not(.empty) .center{font-size:clamp(1.8rem,7vw,2.5rem)}
+.arena-row .card .rank{font-size:clamp(.95rem,3.6vw,1.3rem)}
+.arena-row .card .foot{display:block;position:absolute;right:5px;bottom:4px;font-size:.62rem;opacity:.8}
+.arena-row .card-role{bottom:5px;left:5px;font-size:.43rem}
+.arena-row .card.back .center{font-size:2.15rem}
+.arena-row .card.selected::after{top:2px;right:4px;font-size:.75rem}
+@media(max-height:680px){.launch{min-height:50dvh}.install-tip p{font-size:.72rem}}

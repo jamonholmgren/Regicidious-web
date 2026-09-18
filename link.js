@@ -1,10 +1,10 @@
 /* Single-URL, casually private handoffs. The key rides in the link: not authentication. */
 const LinkCodec=(()=>{
-  const MAX=65536;
+  const MAX=98304;
   const base64url=bytes=>btoa(String.fromCharCode(...bytes)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
   const from64=value=>Uint8Array.from(atob(value.replace(/-/g,'+').replace(/_/g,'/')),ch=>ch.charCodeAt(0));
   async function seal(value){
-    if(typeof value!=='string'||value.length>32768)throw Error('Match too large to share');
+    if(typeof value!=='string'||value.length>65536)throw Error('Match too large to share');
     const secret=crypto.getRandomValues(new Uint8Array(32));
     const iv=crypto.getRandomValues(new Uint8Array(12));
     const key=await crypto.subtle.importKey('raw',secret,'AES-GCM',false,['encrypt']);
