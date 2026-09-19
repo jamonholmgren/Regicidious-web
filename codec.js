@@ -22,7 +22,7 @@ const StateCodec = (() => {
     byte((state.mode==='solo'?0:state.mode==='text'?2:1)|(state.queenRule==='cedric'?128:0));byte(state.players.length);byte(state.turn);number(state.round);
     byte(phases.indexOf(state.phase));byte(state.setup);byte(state.view==null?255:state.view);
     byte(state.selection?['front','back','reserve'].indexOf(state.selection.location):255);
-    byte(state.selection?.index??255);byte(state.attacks);byte(state.kills);
+    byte(state.selection?.index??255);byte(state.actions);byte(state.kills);
     byte(state.refill.length);for(const i of state.refill)byte(i);byte(state.refillIndex);
     for(const p of state.players) {
       string(p.name);byte(playerFlags(p));number(p.coins);
@@ -66,7 +66,7 @@ const StateCodec = (() => {
       const origin=state.history.origin;
       byte(origin.turn);byte(origin.setup);byte(phases.indexOf(origin.phase));
       byte(origin.view==null?255:origin.view);number(origin.round);
-      byte(origin.attacks||0);byte(origin.kills||0);number(origin.turnNumber||1);
+      byte(origin.actions??origin.attacks??0);byte(origin.kills||0);number(origin.turnNumber||1);byte(origin.first||0);
       for(const p of origin.players){
         byte(playerFlags(p));number(p.coins);
         ranksPacked([...p.front,...p.back]);
@@ -95,6 +95,8 @@ const StateCodec = (() => {
         else if(t==='finish')byte(7);
         else if(t==='refillDone')byte(8);
         else if(t==='income')byte(9);
+        else if(t==='mine'){byte(12);card(e.card);}
+        else if(t==='adjust')byte(13);
         else if(t==='arrangeSet'){
           byte(10);byte(e.owner);
           ranksPacked([...e.front,...e.back]);
@@ -105,7 +107,7 @@ const StateCodec = (() => {
           const snap=e.origin;
           byte(snap.turn);byte(snap.setup);byte(phases.indexOf(snap.phase));
           byte(snap.view==null?255:snap.view);number(snap.round);
-          byte(snap.attacks||0);byte(snap.kills||0);number(snap.turnNumber||1);
+          byte(snap.actions??snap.attacks??0);byte(snap.kills||0);number(snap.turnNumber||1);byte(snap.first||0);
           for(const p of snap.players){
             byte(playerFlags(p));number(p.coins);
             ranksPacked([...p.front,...p.back]);
@@ -126,6 +128,9 @@ const StateCodec = (() => {
     if(state.restoreNotices?.length){byte(0xad);byte(state.restoreNotices.length);for(const notice of state.restoreNotices){byte(notice.seat);byte(notice.kind==='invite'?1:0);number(notice.turnNumber);}}
     if(state.finishedAt){byte(0xae);number(Math.floor(state.finishedAt/1000));}
     if(state.scoreVersion){byte(0xaf);byte(state.scoreVersion);}
+    if(state.memory?.length){byte(0xb0);byte(state.memory.length);for(const m of state.memory){byte(m.player);byte(m.index|(m.row==='back'?128:0));card(m.id);number(m.round);}}
+    if(state.players.some(p=>p.miner)){byte(0xb1);for(const p of state.players)card(p.miner);}
+    if(state.first){byte(0xb2);byte(state.first);}
     // Detect accidental truncation/corruption. This is not a security signature.
     let check=2166136261;
     for(const n of out)check=Math.imul(check^n,16777619)>>>0;
@@ -159,13 +164,13 @@ const StateCodec = (() => {
     if(count<2||count>4||turn>=count)throw Error('Invalid players');
     const phase=phases[byte()],setup=byte(),viewCode=byte(),selectionCode=byte(),selectionIndex=byte();
     if(!phase)throw Error('Invalid phase');
-    const attacks=byte(),kills=byte(),refillCount=byte();
+    const actions=byte(),kills=byte(),refillCount=byte();
     const refill=Array.from({length:refillCount},byte),refillIndex=byte();
     const players=Array.from({length:count},(_,i)=>{
       const name=string(),flags=byte(),coins=number();
       const board=ranksPacked(boardCount,i),front=board.slice(0,lineLen),back=board.slice(lineLen);
       const reserve=ranksPacked(byte(),i),deck=ranksPacked(byte(),i);
-      return {name,suit:i,cpu:!!(flags&2),alive:!!(flags&1),persona:personas[flags>>2]||null,coins,front,back,reserve,deck};
+      return {name,suit:i,cpu:!!(flags&2),alive:!!(flags&1),persona:personas[flags>>2]||null,coins,front,back,reserve,deck,miner:null};
     });
     let pending=null;
     if(byte()) {
@@ -184,7 +189,7 @@ const StateCodec = (() => {
       const undoCount=byte();if(undoCount>3)throw Error('Invalid refill history');
       for(let i=0;i<undoCount;i++)refillUndo.push({owner:byte(),from:byte(),to:byte(),card:card()});
     }
-    let matchId='',turnNumber=1,currentBattles=[],lastBattles=[],history=null,startedAt=0,usedAttacker=null,scout=null,restoreNotices=[],finishedAt=0,scoreVersion=0;
+    let matchId='',turnNumber=1,currentBattles=[],lastBattles=[],history=null,startedAt=0,usedAttacker=null,scout=null,restoreNotices=[],finishedAt=0,scoreVersion=0,memory=[],first=0;
     if(at<data.length-4){
       if(byte()!==0xa7)throw Error('Unknown match extension');
       const idLength=byte();if(idLength!==0&&idLength!==16)throw Error('Invalid match ID');
@@ -214,15 +219,18 @@ const StateCodec = (() => {
       if(mag===0xad){const n=byte();if(n>count)throw Error('Invalid restore notice');restoreNotices=Array.from({length:n},()=>{const seat=byte(),kind=byte(),noticedTurn=number();if(seat>=count||kind>1||noticedTurn<1)throw Error('Invalid restore notice');return {seat,kind:kind?'invite':'backup',turnNumber:noticedTurn};});continue;}
       if(mag===0xae){finishedAt=number()*1000;continue;}
       if(mag===0xaf){scoreVersion=byte();if(scoreVersion!==1)throw Error('Invalid score version');continue;}
+      if(mag===0xb0){const n=byte();if(n>24)throw Error('Invalid memory');memory=Array.from({length:n},()=>{const owner=byte(),slot=byte(),id=card(),seen=number();return {player:owner,row:slot&128?'back':'front',index:slot&127,id,round:seen};});continue;}
+      if(mag===0xb1){for(const p of players)p.miner=card();continue;}
+      if(mag===0xb2){first=byte();continue;}
       if(mag!==0xa8)throw Error('Unknown match extension');
       const originTurn=byte(),originSetup=byte(),originPhase=phases[byte()],originView=byte(),originRound=number();
       if(!originPhase)throw Error('Invalid history origin');
-      const originAttacks=byte(),originKills=byte(),originTurnNumber=number();
+      const originAttacks=byte(),originKills=byte(),originTurnNumber=number(),originFirst=byte();
       const originPlayers=Array.from({length:count},(_,i)=>{
         const flags=byte(),coins=number();
         const board=ranksPacked(boardCount,i),front=board.slice(0,lineLen),back=board.slice(lineLen);
         const reserve=ranksPacked(byte(),i),deck=ranksPacked(byte(),i);
-        return {front,back,reserve,deck,coins,alive:!!(flags&1),cpu:!!(flags&2),persona:personas[flags>>2]||null};
+        return {front,back,reserve,deck,coins,alive:!!(flags&1),cpu:!!(flags&2),persona:personas[flags>>2]||null,miner:null};
       });
       const eventCount=number();
       if(eventCount>8192)throw Error('Invalid history');
@@ -257,30 +265,32 @@ const StateCodec = (() => {
         else if(type===7) historyEvents.push({t:'finish'});
         else if(type===8) historyEvents.push({t:'refillDone'});
         else if(type===9) historyEvents.push({t:'income'});
+        else if(type===12) historyEvents.push({t:'mine',card:card()});
+        else if(type===13) historyEvents.push({t:'adjust'});
         else if(type===10){
           const owner=byte(),board=ranksPacked(boardCount,owner),reserve=ranksPacked(byte(),owner);
           historyEvents.push({t:'arrangeSet',owner,front:board.slice(0,lineLen),back:board.slice(lineLen),reserve});
         } else if(type===11){
           const snapTurn=byte(),snapSetup=byte(),snapPhase=phases[byte()],snapView=byte(),snapRound=number();
           if(!snapPhase)throw Error('Invalid history');
-          const snapAttacks=byte(),snapKills=byte(),snapTurnNumber=number();
+          const snapAttacks=byte(),snapKills=byte(),snapTurnNumber=number(),snapFirst=byte();
           const snapPlayers=Array.from({length:count},(_,i)=>{
             const flags=byte(),coins=number();
             const board=ranksPacked(boardCount,i),front=board.slice(0,lineLen),back=board.slice(lineLen);
             const reserve=ranksPacked(byte(),i),deck=ranksPacked(byte(),i);
-            return {front,back,reserve,deck,coins,alive:!!(flags&1),cpu:!!(flags&2),persona:personas[flags>>2]||null};
+            return {front,back,reserve,deck,coins,alive:!!(flags&1),cpu:!!(flags&2),persona:personas[flags>>2]||null,miner:null};
           });
-          historyEvents.push({t:'sync',origin:{turn:snapTurn,setup:snapSetup,phase:snapPhase,view:snapView===255?null:snapView,round:snapRound,attacks:snapAttacks,kills:snapKills,turnNumber:snapTurnNumber,players:snapPlayers}});
+          historyEvents.push({t:'sync',origin:{turn:snapTurn,setup:snapSetup,phase:snapPhase,view:snapView===255?null:snapView,round:snapRound,actions:snapAttacks,kills:snapKills,turnNumber:snapTurnNumber,first:snapFirst,players:snapPlayers}});
         } else throw Error('Unknown history event');
       }
-      history={origin:{turn:originTurn,setup:originSetup,phase:originPhase,view:originView===255?null:originView,round:originRound,attacks:originAttacks,kills:originKills,turnNumber:originTurnNumber,players:originPlayers},events:historyEvents};
+      history={origin:{turn:originTurn,setup:originSetup,phase:originPhase,view:originView===255?null:originView,round:originRound,actions:originAttacks,kills:originKills,turnNumber:originTurnNumber,first:originFirst,players:originPlayers},events:historyEvents};
       if(truncated)history.truncated=true;
     }
     if(at!==data.length-4)throw Error('Unexpected match data');
     players.forEach((p,i)=>{p.emoji??=emojis[i%emojis.length];});
     return {version:1,layout,queenRule,mode,players,turn,round,phase,setup,view:viewCode===255?null:viewCode,
       selection:selectionCode===255?null:{location:['front','back','reserve'][selectionCode],index:selectionIndex},
-      attacks,usedAttacker,scout,kills,pending,refill,refillIndex,refillUndo,matchId,turnNumber,currentBattles,lastBattles,message,log,history,startedAt,restoreNotices,finishedAt,scoreVersion};
+      actions,usedAttacker,scout,memory,kills,pending,refill,refillIndex,refillUndo,matchId,turnNumber,first,currentBattles,lastBattles,message,log,history,startedAt,restoreNotices,finishedAt,scoreVersion};
   }
   return {encode,decode,emojis};
 })();

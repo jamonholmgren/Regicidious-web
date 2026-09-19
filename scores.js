@@ -14,8 +14,9 @@ const ScoreCodec=(()=>{
     if(g?.scoreVersion!==1||g.mode!=='solo'||g.phase!=='victory'||g.players?.length!==2||
       !g.players[0].alive||g.players[0].cpu||g.players[1].alive||!g.players[1].cpu||
       !layouts.includes(g.layout)||!difficulties.includes(g.players[1].persona)||
-      !/^[a-f0-9]{32}$/.test(g.matchId||'')||!Number.isInteger(g.finishedAt)||g.finishedAt<1)return null;
-    const turns=2*(g.round-1)+g.turn+1;
+      !/^[a-f0-9]{32}$/.test(g.matchId||'')||!Number.isInteger(g.round)||g.round<2||
+      !Number.isInteger(g.finishedAt)||g.finishedAt<1)return null;
+    const turns=2*(g.round-2)+((g.turn-(g.first??0)+2)%2)+1;
     return {id:g.matchId,layout:g.layout,difficulty:g.players[1].persona,turns,
       score:points(turns,g.players[1].persona),date:Math.floor(g.finishedAt/1000),
       name:g.players[0].name.slice(0,24),emoji:g.players[0].emoji};

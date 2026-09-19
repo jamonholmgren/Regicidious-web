@@ -46,7 +46,6 @@ let turnLink='',turnLinkSource='',turnLinkBusy=false,turnLinkError='';
 let pasteOpen=false;
 let inviteLinks={};
 let setupOpen=false,installDismissed=false,deleteTimer=null,buyPrompt=null,buyPromptTimer=null,completedOpen=false;
-let retreatArmed=null,retreatTimer=null;
 let scoresOpen=false,scoreLayout='expanded',scoreLink='',scoreLinkSource='',scoreLinkBusy=false,scoreLinkError='',incomingScores=null,incomingRatings=null,scoreImportNotice='';
 let ratingError='',ratingReconciled=false;
 let tutorialOpen=false,tutorialStep=0,tutorialRolling=false,tutorialDice=null,tutorialTimer=null;
@@ -57,7 +56,7 @@ try { tutorialOpen=localStorage.getItem('regicidious.tutorial.open')==='1';tutor
 const milliseconds=n=>`${n.toFixed(2)} ms`;
 const timingLine=()=>timings.render===null?'':`Last move: logic ${milliseconds(timings.logic)} · save ${milliseconds(timings.save)} · render ${milliseconds(timings.render)}`;
 const creditLine='Original game by Shane Holmgren<br>Digital adaptation by Jamon Holmgren, <a href="https://jammin.games/" target="_blank" rel="noopener noreferrer">Jammin Games</a>';
-const BUILD=49;
+const BUILD=50;
 const buildLine=BUILD>0?`Build ${BUILD}`:'Build local';
 
 try {
@@ -132,17 +131,14 @@ function encodeForBackup(state) {
   return StateCodec.encode(state,{history:false});
 }
 function encodeForTurn(state) {
-  if(state.history?.origin){
-    const full=StateCodec.encode(state);
-    if(full.length<=8000)return full;
-  }
-  return StateCodec.encode(state,{history:false});
+  // Turn links ride in a single text message: no replay history, no text log.
+  return StateCodec.encode({...state,log:[]},{history:false});
 }
 function captureOrigin(state) {
   return {
     turn:state.turn,round:state.round,phase:state.phase,setup:state.setup,view:state.view,
-    attacks:state.attacks,kills:state.kills,turnNumber:state.turnNumber||1,
-    players:state.players.map(p=>({front:[...p.front],back:[...p.back],reserve:[...p.reserve],deck:[...p.deck],coins:p.coins,alive:p.alive,cpu:p.cpu,persona:p.persona||null}))
+    actions:state.actions,kills:state.kills,turnNumber:state.turnNumber||1,first:state.first??0,
+    players:state.players.map(p=>({front:[...p.front],back:[...p.back],reserve:[...p.reserve],deck:[...p.deck],coins:p.coins,alive:p.alive,cpu:p.cpu,persona:p.persona||null,miner:p.miner||null}))
   };
 }
 function record(event) {
@@ -175,20 +171,24 @@ function validateState(saved) {
   // The old rule bit remains readable in links, but all matches now use one rule set.
   saved.queenRule='cedric';
   const cols=saved.layout==='expanded'?4:3, boardLen=cols*2;
+  saved.actions??=saved.attacks;
   if(!validIndex(saved.turn,count)||!validIndex(saved.setup,count)||!Number.isInteger(saved.round)||saved.round<1||saved.round>1000000)bad();
   if(!['invite','setup','buy','arrange','attack','battle','queen','refill','income','victory','stalemate'].includes(saved.phase)||saved.view!=null&&!validIndex(saved.view,count))bad();
-  if(saved.phase==='invite'&&(saved.mode!=='text'||saved.turn!==0||saved.setup!==0||saved.attacks!==0))bad();
-  if(!Number.isInteger(saved.attacks)||saved.attacks>2||saved.attacks<0||!Number.isInteger(saved.kills)||saved.kills<0||saved.kills>2)bad();
+  if(saved.phase==='invite'&&(saved.mode!=='text'||saved.turn!==0||saved.setup!==0||saved.actions!==0))bad();
+  if(!Number.isInteger(saved.actions)||saved.actions>2||saved.actions<0||!Number.isInteger(saved.kills)||saved.kills<0||saved.kills>2)bad();
   saved.usedAttacker??=saved.pending?.attackCard||saved.currentBattles?.at(-1)?.attackCard||null;
   if(saved.usedAttacker!=null&&!validCard(saved.usedAttacker,saved.turn))bad();
   saved.scout??=null;
   if(saved.scout!=null&&(!validIndex(saved.scout.player,count)||saved.scout.player===saved.turn||!['front','back'].includes(saved.scout.row)||!validIndex(saved.scout.index,saved.layout==='expanded'?4:3)||!validCard(saved.scout.id,saved.scout.player)))bad();
+  saved.memory??=[];
+  if(!Array.isArray(saved.memory)||saved.memory.length>24||saved.memory.some(m=>!validIndex(m.player,count)||!['front','back'].includes(m.row)||!validIndex(m.index,cols)||!validCard(m.id,m.player)||!Number.isInteger(m.round)||m.round<1))bad();
   saved.refillUndo??=[];
   if(!Array.isArray(saved.refill)||saved.refill.length>count||new Set(saved.refill).size!==saved.refill.length||saved.refill.some(i=>!validIndex(i,count)))bad();
   if(!Array.isArray(saved.refillUndo)||saved.refillUndo.length>3||saved.refillUndo.some(m=>!validIndex(m.owner,count)||!validIndex(m.from,cols)||!validIndex(m.to,cols)||!validCard(m.card,m.owner)))bad();
   if(!Number.isInteger(saved.refillIndex)||saved.refillIndex<0||saved.refillIndex>saved.refill.length||saved.phase==='refill'&&saved.refillIndex>=saved.refill.length)bad();
   if(typeof saved.message!=='string'||saved.message.length>2048||!Array.isArray(saved.log)||saved.log.length>1000||saved.log.some(s=>typeof s!=='string'||s.length>2048))bad();
-  saved.matchId??='';saved.turnNumber??=1;saved.currentBattles??=[];saved.lastBattles??=[];saved.history??=null;saved.startedAt??=0;
+  saved.matchId??='';saved.turnNumber??=1;saved.first??=0;saved.currentBattles??=[];saved.lastBattles??=[];saved.history??=null;saved.startedAt??=0;
+  if(!validIndex(saved.first,count))bad();
   saved.finishedAt??=0;saved.scoreVersion??=0;
   if(!Number.isInteger(saved.finishedAt)||saved.finishedAt<0||saved.finishedAt>4e12||![0,1].includes(saved.scoreVersion))bad();
   saved.restoreNotices??=[];
@@ -220,6 +220,9 @@ function validateState(saved) {
     if(!Array.isArray(p.front)||p.front.length!==cols||!Array.isArray(p.back)||p.back.length!==cols||!Array.isArray(p.reserve)||!Array.isArray(p.deck))bad();
     const cards=[...p.front,...p.back,...p.reserve,...p.deck].filter(id=>id!=null);
     if(cards.length>13||new Set(cards).size!==cards.length||cards.some(id=>!validCard(id,i)))bad();
+    p.miner??=null;
+    if(p.miner!=null&&(!isPeasant(p.miner||'')||!validCard(p.miner,i)||!MINING_ROWS.some(r=>p[r].includes(p.miner))))bad();
+    if(p.alive&&['attack','battle','queen','income','victory','stalemate'].includes(saved.phase)&&!covered(p))bad();
   });
   if(saved.scoreVersion===1&&(saved.mode!=='solo'||count!==2))bad();
   if(saved.selection!=null){
@@ -328,6 +331,7 @@ function shareMessage(saved,url) {
   if(saved.phase==='setup')return `${saved.players[saved.turn].name}, the enemy is at the gates! Set your battle lines in Regicidious. ${url}`;
   return `${lastBattleSentence(saved)} ${saved.players[saved.turn].name}, it’s your turn #${saved.turnNumber}. To arms! ${url}`;
 }
+const TURN_TOKEN_LIMIT=1500,TURN_MESSAGE_LIMIT=2000;
 function ensureTurnLink() {
   if(!game||game.mode!=='text')return;
   const source=encodeForTurn(game);
@@ -335,7 +339,9 @@ function ensureTurnLink() {
   turnLinkSource=source;turnLink='';turnLinkBusy=true;turnLinkError='';
   LinkCodec.seal(source).then(token=>{
     if(turnLinkSource!==source)return;
-    turnLink=location.href.split('#')[0]+'#turn='+token;turnLinkBusy=false;render();
+    turnLinkBusy=false;
+    if(token.length>TURN_TOKEN_LIMIT){turnLinkError='Turn link is unusually large; send a backup link instead.';render();return;}
+    turnLink=location.href.split('#')[0]+'#turn='+token;render();
   }).catch(error=>{turnLinkBusy=false;turnLinkError='Could not prepare the turn link. Try again.';console.error(error);render();});
 }
 function ensureInvites(){
@@ -471,7 +477,7 @@ function commit(change) {
   return true;
 }
 function newGame() {
-  buyPrompt=null;clearTimeout(buyPromptTimer);setupOpen=false;
+  buyPrompt=null;clearTimeout(buyPromptTimer);setupOpen=false;turnAdjusted=false;minePick=false;
   slotId=makeSlotId();
   const count = draft.count, layout=draft.layout==='classic'?'classic':'expanded';
   const players = Array.from({length:count}, (_,i) => {
@@ -479,17 +485,17 @@ function newGame() {
     if(layout==='classic'){
       const six = [`${i}-K`,`${i}-Q`,`${i}-J`,...pool.splice(0,3)];
       pool.sort((a,b)=>RANKS.indexOf(rank(a))-RANKS.indexOf(rank(b)));
-      const p={ name:draft.names[i].trim() || `Player ${i+1}`, emoji:draft.emojis[i], suit:i, cpu:draft.mode==='solo' && i!==0, persona:draft.mode==='solo'&&i!==0?draft.difficulty:null, front:[six[1],six[2],six[3]], back:[six[0],six[4],six[5]], reserve:[], deck:pool, coins:0, alive:true };
+      const p={ name:draft.names[i].trim() || `Player ${i+1}`, emoji:draft.emojis[i], suit:i, cpu:draft.mode==='solo' && i!==0, persona:draft.mode==='solo'&&i!==0?draft.difficulty:null, front:[six[1],six[2],six[3]], back:[six[0],six[4],six[5]], reserve:[], deck:pool, coins:0, alive:true, miner:null };
       if (p.cpu) arrangeAI(p);
       return p;
     }
     const seven = [`${i}-K`,`${i}-Q`,`${i}-J`,...pool.splice(0,4)];
     pool.sort((a,b)=>RANKS.indexOf(rank(a))-RANKS.indexOf(rank(b)));
-    const p={ name:draft.names[i].trim() || `Player ${i+1}`, emoji:draft.emojis[i], suit:i, cpu:draft.mode==='solo' && i!==0, persona:draft.mode==='solo'&&i!==0?draft.difficulty:null, front:[seven[1],seven[2],seven[3],seven[4]], back:[seven[0],seven[5],seven[6],null], reserve:[], deck:pool, coins:0, alive:true };
+    const p={ name:draft.names[i].trim() || `Player ${i+1}`, emoji:draft.emojis[i], suit:i, cpu:draft.mode==='solo' && i!==0, persona:draft.mode==='solo'&&i!==0?draft.difficulty:null, front:[seven[1],seven[2],seven[3],seven[4]], back:[seven[0],seven[5],seven[6],null], reserve:[], deck:pool, coins:0, alive:true, miner:null };
     if (p.cpu) arrangeAI(p);
     return p;
   });
-  game = {version:1,layout,queenRule:'cedric',mode:draft.mode,players,turn:0,round:1,phase:'setup',setup:0,view:draft.mode==='text'?0:null,selection:null,attacks:0,usedAttacker:null,scout:null,kills:0,pending:null,refill:[],refillIndex:0,refillUndo:[],matchId:makeMatchId(),turnNumber:1,currentBattles:[],lastBattles:[],message:'',log:[],history:null,startedAt:Math.floor(Date.now()/1000)*1000,restoreNotices:[],finishedAt:0,scoreVersion:draft.mode==='solo'&&count===2?1:0};
+  game = {version:1,layout,queenRule:'cedric',mode:draft.mode,players,turn:0,round:1,phase:'setup',setup:0,view:draft.mode==='text'?0:null,selection:null,actions:0,usedAttacker:null,scout:null,memory:[],kills:0,pending:null,refill:[],refillIndex:0,refillUndo:[],matchId:makeMatchId(),turnNumber:1,first:random(count),currentBattles:[],lastBattles:[],message:'',log:[],history:null,startedAt:Math.floor(Date.now()/1000)*1000,restoreNotices:[],finishedAt:0,scoreVersion:draft.mode==='solo'&&count===2?1:0};
   game.history={origin:captureOrigin(game),events:[]};
   if(draft.mode==='text')game.phase='invite';
   if(draft.mode==='text') persistSeat(game.matchId,0);
@@ -500,22 +506,32 @@ function advanceTurn() {
   const alive = living();
   if (alive.length <= 1) { game.phase = 'victory'; game.view = null; return; }
   const next = alive.find(i => i > game.turn) ?? alive[0];
-  if (next <= game.turn) game.round++;
+  const first=game.first??0,n=game.players.length,rel=i=>(i-first+n)%n;
+  if (rel(next) <= rel(game.turn)) game.round++;
   if(game.mode==='text'){game.lastBattles=game.currentBattles;game.currentBattles=[];game.turnNumber++;}
-  game.turn = next; game.phase = player(next).cpu?'buy':'arrange'; game.view = game.mode==='text'?next:null; game.selection = null;
-  game.attacks = 0; game.usedAttacker=null; game.scout=null; game.kills = 0; game.pending = null;
+  game.turn = next;
+  const nextPlayer=player(next);
+  if(nextPlayer.miner){
+    // A surviving miner pays its coin when its owner's turn begins.
+    if(nextPlayer.front.includes(nextPlayer.miner)||nextPlayer.back.includes(nextPlayer.miner))nextPlayer.coins=Math.min(COIN_CAP,nextPlayer.coins+1);
+    nextPlayer.miner=null;
+  }
+  game.phase = 'attack'; game.view = game.mode==='text'?next:null; game.selection = null; minePick=false;
+  game.actions = 0; game.usedAttacker=null; game.scout=null; game.kills = 0; game.pending = null; turnAdjusted=false;
+  if(game.memory){game.memory=game.memory.filter(m=>game.round-m.round<3);pruneMemory();}
   game.message = player(next).cpu?`${player(next).name} is thinking…`:'';
 }
-function attackLimit(){return game.turn===0&&game.round===1?1:2;}
+function actionLimit(){return game.round===2&&game.players.length===2&&game.turn===(game.first??0)?1:2;}
 function cardHTML(id, action, location, index, opts={}) {
   const selected = game?.selection && game.selection.location === location && game.selection.index === index;
-  const attrs = action ? `data-action="${action}" data-location="${location}" data-index="${index}"` : 'disabled';
+  const attrs = `data-slot="${location}:${index}" ${action ? `data-action="${action}" data-location="${location}" data-index="${index}"` : 'disabled'}`;
   const place=opts.owner!=null?`${player(opts.owner).name}, ${opts.row} slot ${index+1}, `:'';
   const queenLink=opts.className?.includes('queen-linked')?' style="border-color:#e9be74;outline:1px solid #f6d899;outline-offset:1px;box-shadow:0 4px 0 #10251e,0 0 12px #e9be7470"':opts.className?.includes('queen-attendant')?' style="border-color:#e9be74;box-shadow:0 4px 0 #10251e,0 0 9px #e9be7455"':'';
   if (!id) return `<button class="card empty ${opts.buyConfirm?'buy-armed':''} ${opts.className||''}" ${attrs} aria-label="${escapeHTML(place)}${opts.buyConfirm?'tap again to hire for two coins':'empty slot'}">${opts.buyConfirm?'2 ◉':'+'}</button>`;
   if (opts.hidden) return `<button class="card back ${opts.target?'target':''} ${opts.className||''}" ${attrs} aria-label="${escapeHTML(place)}face-down card"><span class="center">♛</span></button>`;
   const r=rank(id),role={A:'ASSASSIN','10':'KNIGHT',J:'JACK',Q:'QUEEN',K:'KING'}[r]||'';
-  return `<button class="card ${['♥','♦'].includes(suit(id))?'red':''} ${selected?'selected':''} ${opts.className||''}"${queenLink} ${attrs} aria-label="${escapeHTML(place)}${label(id)}${role?`, ${role.toLowerCase()}`:''}" aria-pressed="${Boolean(selected)}"><span class="rank">${r}<small>${suit(id)}</small></span><span class="center">${suit(id)}</span>${role?`<span class="card-role">${role}</span>`:''}<span class="rank foot">${r}<small>${suit(id)}</small></span></button>`;
+  const mining=opts.className?.includes('mining');
+  return `<button class="card ${['♥','♦'].includes(suit(id))?'red':''} ${selected?'selected':''} ${opts.className||''}"${queenLink} ${attrs} aria-label="${escapeHTML(place)}${label(id)}${role?`, ${role.toLowerCase()}`:''}${mining?', mining':''}" aria-pressed="${Boolean(selected)}"><span class="rank">${r}<small>${suit(id)}</small></span><span class="center">${suit(id)}</span>${role?`<span class="card-role">${role}</span>`:''}${mining?'<span class="mine-badge">⛏</span>':''}<span class="rank foot">${r}<small>${suit(id)}</small></span></button>`;
 }
 function lineHTML(cards, action, location, hidden=false) { return `<div class="line">${cards.map((id,i) => cardHTML(id,action,location,i,{hidden})).join('')}</div>`; }
 function syncGameHash(){
@@ -615,7 +631,7 @@ function renderTutorial() {
     'A champion may strike an enemy in the vanguard. Tap Sir Strawhelm’s leftmost hidden card.',
     'It is a Peasant (4). Your 8 outranks the 4, so you cast two dice to Sir Strawhelm’s one. The highest single die carries the clash.',
     'Your highest die is 5; his is 4. His Peasant falls. The spent 2 is dimmed. A draw would have spared both souls.',
-    'A fallen foe yields one coin. Your Jack brings another at turn’s end: claim two. The opening commander may make one charge; later turns permit two, each led by a different champion.',
+    'A fallen foe yields one coin. Your Jack brings another at turn’s end: claim two. Each turn grants up to two actions: charge, adjust your lines, or send a peasant to the mines; each charge needs a different champion.',
     'Before his turn, Sir Strawhelm moves his Knight (10) into the vanguard. Against your Peasant (8), a front-line Knight casts three dice. Watch the answering charge.',
     'His 6 bests your 3, and your Peasant falls. A steadfast defender may strike down an attacker. Your Queen and King still hold the realm.',
     'You have seen the muster, the charge, the dice, the spoils, and the defense. In a true match, prepare your lines before steel is drawn, spend two coins to levy a card, and keep your King alive.'
@@ -682,7 +698,7 @@ function renderTextInvites() {
 function renderStart() {
   const standalone=window.matchMedia?.('(display-mode: standalone)').matches||navigator.standalone;
   const install=!standalone&&!installDismissed?`<section class="install-tip" aria-label="Install Regicidious"><div><strong>Add to Home Screen</strong><p>On iPhone, open in Safari, tap Share, then Add to Home Screen. For text games, paste a received link into the installed app if Messages opens Safari.</p></div><button class="tip-close" data-action="dismiss-install" aria-label="Dismiss install tip">×</button></section>`:'';
-  frame(`<section class="launch"><div class="launch-crown">♛</div><h1>A battle in your pocket</h1><p>Raise your banner. Guard your king. Take the crown.</p><button class="button wide launch-start" data-action="setup-open">Start new game →</button><button class="button secondary wide" data-action="tutorial-open">Training grounds · tutorial</button><button class="button secondary wide" data-action="scores-open">Solo high scores</button>${gameSlots().length?'<button class="button secondary wide" data-action="games">Continue a saved game</button>':''}</section>${install}<details class="panel compact-rules"><summary>How to play</summary><p>Prepare your line, hire reinforcements, then attack once on the opening turn and up to twice thereafter with different cards. Solo, pass the phone, or exchange turns by text link.</p></details>`);
+  frame(`<section class="launch"><div class="launch-crown">♛</div><h1>A battle in your pocket</h1><p>Raise your banner. Guard your king. Take the crown.</p><button class="button wide launch-start" data-action="setup-open">Start new game →</button><button class="button secondary wide" data-action="tutorial-open">Training grounds · tutorial</button><button class="button secondary wide" data-action="scores-open">Solo high scores</button>${gameSlots().length?'<button class="button secondary wide" data-action="games">Continue a saved game</button>':''}</section>${install}<details class="panel compact-rules"><summary>How to play</summary><p>Set your formation in round one, then take up to two actions each turn — attack, adjust your lines, or send a peasant to the mines — using a different card for each attack. Solo, pass the phone, or exchange turns by text link.</p></details>`);
 }
 function renderSetup() {
   const modes=[['solo','Solo vs computer'],['local','Pass the phone'],['text','Text-message multiplayer']];
@@ -721,17 +737,19 @@ function arenaRow(owner,row,own,mode,visual) {
   const cards=p[row].map((id,index)=>{
     let action='';
     if(own && ['setup','buy','arrange','refill'].includes(mode))action='slot';
-    if(own && mode==='attack' && id && id!==game.usedAttacker && (row==='front'||rank(id)==='10'))action='attacker';
+    if(own && mode==='attack' && minePick)action=id&&isPeasant(id)&&id!==p.miner&&MINING_ROWS.includes(row)?'miner':'';
+    else if(own && mode==='attack' && id && id!==game.usedAttacker && id!==p.miner && (row==='front'||rank(id)==='10'))action='attacker';
     if(!own && mode==='attack' && id)action='target';
     const source=visual?.source?.owner===owner&&visual.source.row===row&&visual.source.index===index;
     const target=visual?.target?.owner===owner&&visual.target.row===row&&visual.target.index===index;
     const loser=visual?.loser?.owner===owner&&visual.loser.row===row&&visual.loser.index===index;
     const winner=visual?.winner?.owner===owner&&visual.winner.row===row&&visual.winner.index===index;
-    const reveal=source||target&&visual?.revealTarget||!own && mode==='battle' && game.pending?.defender===owner && game.pending.target.row===row && game.pending.target.index===index;
+    const mining=id!=null&&p.miner===id;
+    const reveal=mining||source||target&&visual?.revealTarget||!own && mode==='battle' && game.pending?.defender===owner && game.pending.target.row===row && game.pending.target.index===index;
     const hidden=visual?.revealAll?false:visual?(!own||visual.hideOwnOthers||player(owner).cpu)&&!reveal:!own&&!reveal;
     const active=source||target&&visual?.showTarget;
     const linkClass=!visual&&index===queenIndex?'queen-linked':!visual&&index===attendant?.index?'queen-attendant':'';
-    const className=visual?`${!active?'replay-dim':''} ${active?'replay-active':''} ${source&&visual.kind==='reveal'?'replay-flip':''} ${loser?'replay-loser':''} ${winner?'replay-winner':''}`:linkClass;
+    const className=(visual?`${!active?'replay-dim':''} ${active?'replay-active':''} ${source&&visual.kind==='reveal'?'replay-flip':''} ${loser?'replay-loser':''} ${winner?'replay-winner':''}`:linkClass)+(mining?' mining':'');
     return cardHTML(id,action,own?row:`${owner}:${row}`,index,{hidden,owner,row,target:reveal,className,buyConfirm:own&&['buy','arrange'].includes(mode)&&buyPrompt?.location===row&&buyPrompt.index===index});
   });
   const wide=p[row].length>3?' cols-4':'';
@@ -774,7 +792,7 @@ function renderArena(owner,mode,intro,controls,visual) {
   const own=player(owner);
   const seenReserve=visual?.revealAll&&target?.reserve?.length?`<div class="arena-row"><span class="arena-label">Reserve</span><div class="reserve">${target.reserve.map((id,i)=>cardHTML(id,'','reserve',i,{owner:opponent,row:'reserve'})).join('')}</div></div>`:'';
   const last=visual? '':replayLastButton(true);
-  const attackStatus=['attack','battle','replay'].includes(mode)?` · ${game.attacks}/${attackLimit()} attacks`:'';
+  const attackStatus=['attack','battle','replay'].includes(mode)?` · ${game.actions}/${actionLimit()} actions`:'';
   frame(`<section class="arena" aria-label="Battlefield"><div class="arena-opponent">${chips}<div class="arena-hud">${heading}<span>${target?`${target.front.filter(Boolean).length+target.back.filter(Boolean).length} cards`:''}</span></div>${target?arenaRow(opponent,'back',false,mode,visual):''}${target?arenaRow(opponent,'front',false,mode,visual):''}${seenReserve}</div><div class="arena-middle">${middle}</div><div class="arena-self"><div class="arena-hud"><strong>${own.emoji} ${escapeHTML(own.name)} ${SUITS[owner]}</strong><span>◉ ${own.coins}${attackStatus}</span></div>${arenaRow(owner,'front',true,mode,visual)}${arenaRow(owner,'back',true,mode,visual)}${arenaReserve(owner,visual)}</div><div class="arena-dock ${visual?'replay-dock':''}${last?' with-last':''}">${controls}${last}</div></section>${arenaDetails()}`,true);
 }
 function renderPlay() {
@@ -783,11 +801,16 @@ function renderPlay() {
   let controls = '';
   if (game.phase === 'buy' || game.phase === 'arrange') {
     const canBolster=p.front.includes(null)&&p.back.some(Boolean);
-    intro = buyPrompt?'Hark! Tap the gilded hollow again to hire a random card for 2 coins.':`Prepare!! Good sire, array thy vanguard ere the horns sound.${p.coins>=2&&p.deck.length?' Tap an empty hollow twice to hire a random card for 2 coins.':''}`;
-    controls = `${canBolster?`<button class="button secondary" data-action="bolster">Bolster your lines</button>`:''}<button class="button wide" data-action="next">Battle lines ready for battle!</button>`;
+    intro = buyPrompt?'Hark! Tap the gilded hollow again to hire a random card for 2 coins.':`Prepare!! Good sire, array thy vanguard ere the horns sound.${p.coins>=HIRE_COST&&p.deck.length?' Tap an empty hollow twice to hire a random card for 2 coins.':''}${covered(p)?'':' Every rear card needs a card in front of it.'}`;
+    controls = `${canBolster?`<button class="button secondary" data-action="bolster">Bolster your lines</button>`:''}<button class="button wide" data-action="next" ${covered(p)?'':'disabled'}>Battle lines ready for battle!</button>`;
   } else if (game.phase === 'attack') {
-    intro = `To arms! Charge ${game.attacks+1}/${attackLimit()}: tap thy vanguard champion or rear Knight, then a foe.${game.attacks?' A different champion must lead this charge.':''}`;
-    controls = `<button class="button secondary wide" data-action="finish-attacks">${retreatArmed===retreatKey()?'Confirm end attacks':game.attacks?'Sound the retreat':'Hold the line'} →</button>`;
+     const eligible=mineCandidates(p);
+    intro = minePick?'Send a peasant to the mines: tap one of your peasants (2-9).':`Action ${game.actions+1}/${actionLimit()}: tap a champion then a foe to attack, or choose below.${game.usedAttacker?' A different champion must lead each charge.':''}`;
+    const mineButton=minePick?'<button class="button secondary" data-action="mine">Keep this peasant in line</button>'
+      :p.miner?'<button class="button secondary" disabled>Peasant already mining</button>'
+      :eligible.length?'<button class="button secondary" data-action="mine">Mine · 1 action</button>'
+      :'<button class="button secondary" disabled>No peasant free to mine.</button>';
+     controls = `<button class="button secondary" data-action="adjust">Adjust formation · 1 action</button>${mineButton}`;
   } else {
     const jack = hasCard(p,'J') ? 1 : 0;
     intro = `Spoils of war: ${game.kills} fallen ${game.kills===1?'champion':'champions'}${jack?' + 1 Jack’s levy':''} = ${game.kills+jack} ${game.kills+jack===1?'coin':'coins'}.`;
@@ -795,8 +818,6 @@ function renderPlay() {
   }
   renderArena(game.turn,game.phase,intro,controls);
 }
-function retreatKey(){return `${slotId}:${game?.round}:${game?.turn}:${game?.attacks}`;}
-function clearRetreat(){retreatArmed=null;clearTimeout(retreatTimer);}
 function renderRefill() {
   const index = game.refill[game.refillIndex], p = player(index);
   const gaps = p.front.filter(id => !id).length;
@@ -806,13 +827,69 @@ function adjacentPeasants(p, row, index) {
   const cols=p[row]?.length||3;
   return [index-1,index+1].filter(i => i>=0 && i<cols && isPeasant(p[row][i] || '')).map(i => ({row,index:i,id:p[row][i]}));
 }
-function reinforceFront(p) {
+function covered(p){ return p.back.every((id,i)=>!id||p.front[i]); }
+function closeRanks(p) {
   if(!p||!Array.isArray(p.front)||!Array.isArray(p.back))return false;
-  if(p.front.some(Boolean))return false;
-  if(!p.back.some(Boolean))return false;
-  p.front=p.back.map(id=>id||null);
-  p.back=p.back.map(()=>null);
-  return true;
+  const owner=game?.players?.indexOf(p);
+  const moveMemory=(fromRow,fromIndex,toRow,toIndex)=>{
+    if(owner==null||owner<0||!game?.memory)return;
+    const m=game.memory.find(m=>m.player===owner&&m.row===fromRow&&m.index===fromIndex);
+    if(m){m.row=toRow;m.index=toIndex;}
+  };
+  let moved=false;
+  while(!covered(p)){
+    const fc=p.front.filter(Boolean).length, bc=p.back.filter(Boolean).length;
+    if(fc>=bc){
+      // Case A — the front has enough cards: slide the front cards (preserving
+      // left-to-right order, gaps allowed) into a column set that covers every
+      // back card. Prefer the fewest gaps, then the least total displacement,
+      // then the lexicographically smallest column list.
+      const frontIdx=p.front.map((id,i)=>id?i:-1).filter(i=>i>=0);
+      const backCols=p.back.map((id,i)=>id?i:-1).filter(i=>i>=0);
+      let best=null;
+      const less=(a,b)=>{for(let k=0;k<a.length;k++){if(a[k]!==b[k])return a[k]<b[k];}return false;};
+      const choose=(start,picked)=>{
+        if(picked.length===fc){
+          if(!backCols.every(c=>picked.includes(c)))return;
+          const gaps=picked[fc-1]-picked[0]+1-fc;
+          const disp=picked.reduce((s,c,k)=>s+Math.abs(c-frontIdx[k]),0);
+          const key=[gaps,disp,...picked];
+          if(!best||less(key,best.key))best={picked,key};
+          return;
+        }
+        for(let c=start;c<=p.front.length-(fc-picked.length);c++)choose(c+1,[...picked,c]);
+      };
+      choose(0,[]);
+      if(!best)break;
+      const remap=new Map();
+      frontIdx.forEach((i,k)=>{if(best.picked[k]!==i)remap.set(i,best.picked[k]);});
+      if(remap.size){
+        const next=p.front.map(()=>null);
+        for(const [from,to] of remap){next[to]=p.front[from];moveMemory('front',from,'front',to);}
+        frontIdx.forEach((i,k)=>{if(!remap.has(i))next[i]=p.front[i];});
+        p.front=next;
+        moved=true;
+      }
+      if(!remap.size)break;
+    } else {
+      // Case B — the back outnumbers the front: the first uncovered back slot advances.
+      const i=p.back.findIndex((id,k)=>id&&!p.front[k]);
+      if(rank(p.back[i])==='K'&&bc>1){
+        // A different rear card advances (lowest value, first on ties) and the King takes its slot.
+        let j=-1;
+        for(let k=0;k<p.back.length;k++)if(p.back[k]&&rank(p.back[k])!=='K'&&(j<0||value(p.back[k])<value(p.back[j])))j=k;
+        p.front[i]=p.back[j];p.back[j]=p.back[i];p.back[i]=null;
+        moveMemory('back',j,'front',i);
+        moveMemory('back',i,'back',j);
+      } else {
+        p.front[i]=p.back[i];p.back[i]=null;
+        moveMemory('back',i,'front',i);
+      }
+      moved=true;
+    }
+  }
+  if(moved)clampMiner(p);
+  return moved;
 }
 function diceCount(attacker, defender, source, target) {
   let a = 1, d = 1;
@@ -832,9 +909,16 @@ function renderBattle() {
   const rescue=b.sacrifice.length?b.sacrifice[weakestSacrifice(b)]:null;
   const outcome = b.result === 'tie' ? 'The clash is drawn; both champions endure.' : rescue?royalSacrificeSentence(player(b.result==='attack'?b.defender:game.turn).name,b.result==='attack'?b.defendCard:b.attackCard,rescue.id):b.result === 'attack' ? `${player(game.turn).name}’s ${cardTitle(b.attackCard)} strikes down ${player(b.defender).name}’s ${cardTitle(b.defendCard)}.` : `${player(b.defender).name}’s ${cardTitle(b.defendCard)} strikes down ${player(game.turn).name}’s ${cardTitle(b.attackCard)}.`;
   renderArena(game.turn,'battle',outcome,`<button class="button" data-action="battle-next" disabled>Continue →</button>`);
-  animateDice(b);
+  animateDice(b,battleOutcomeSlots(b));
 }
-function animateDice(b) {
+function battleOutcomeSlots(b) {
+  if(b.result==='tie')return {};
+  const slot=(owner,row,index)=>({owner,row,index,selector:`.card[data-slot="${owner===game.turn?row:`${owner}:${row}`}:${index}"]`});
+  const sacrifice=b.sacrifice.length?b.sacrifice[weakestSacrifice(b)]:null;
+  if(b.result==='attack')return {loser:sacrifice?slot(b.defender,sacrifice.row,sacrifice.index):slot(b.defender,b.target.row,b.target.index),winner:slot(game.turn,b.source.row,b.source.index)};
+  return {loser:sacrifice?slot(game.turn,sacrifice.row,sacrifice.index):slot(game.turn,b.source.row,b.source.index),winner:slot(b.defender,b.target.row,b.target.index)};
+}
+function animateDice(b,outcome={}) {
   const lane=app.querySelector('[data-dice-lane]');
   if(!lane)return;
   const faces=[...lane.querySelectorAll('.die')],numbers=[...b.defendDice,...b.attackDice];
@@ -847,6 +931,8 @@ function animateDice(b) {
     const result=app.querySelector('.battle-result'),button=app.querySelector('[data-action="battle-next"]');
     if(result)result.textContent=result.dataset.outcome;
     if(button)button.disabled=false;
+    if(outcome.loser)app.querySelector(outcome.loser.selector)?.classList.add('replay-loser');
+    if(outcome.winner)app.querySelector(outcome.winner.selector)?.classList.add('replay-winner');
     try { navigator.vibrate?.(18); } catch { /* iOS may not support vibration. */ }
   };
   if(window.matchMedia?.('(prefers-reduced-motion: reduce)').matches){finish();return;}
@@ -918,6 +1004,14 @@ function renderPlayback() {
   const finalGame=game;
   game=step.state;
   try {
+    if(step.kind==='mine'||step.kind==='adjust'){
+      const actor=player(game.turn).name;
+      const line=step.kind==='mine'?`${actor} sends the ${cardTitle(player(game.turn).miner||'0-2')} to the mines.`:`${actor} adjusts the formation.`;
+      renderArena(game.turn,'replay',line,`<button class="button secondary" data-action="replay-next">Next →</button>`,{kind:step.kind,opponent:game.turn,hideOwnOthers:true});
+      clearTimeout(replayTimer);replayTimer=null;
+      replayTimer=setTimeout(advanceReplay,650);
+      return;
+    }
     const b=game.pending,attacker=game.turn;
     const source=b?{owner:attacker,row:b.source.row,index:b.source.index}:{owner:attacker,row:game.selection.location,index:game.selection.index};
     const target=b?{owner:b.defender,row:b.target.row,index:b.target.index}:step.target;
@@ -954,14 +1048,14 @@ function renderPlayback() {
 function article(title) { return /^[AEIOU]/.test(title)?'an':'a'; }
 function applyOrigin(state, origin) {
   state.turn=origin.turn;state.round=origin.round;state.phase=origin.phase;state.setup=origin.setup;
-  state.view=origin.view;state.attacks=origin.attacks;state.usedAttacker=null;state.scout=null;state.kills=origin.kills;
-  state.turnNumber=origin.turnNumber||1;state.selection=null;state.pending=null;
+  state.view=origin.view;state.actions=origin.actions??origin.attacks??0;state.usedAttacker=null;state.scout=null;state.memory=[];state.kills=origin.kills;
+  state.turnNumber=origin.turnNumber||1;state.first=origin.first??0;state.selection=null;state.pending=null;
   state.refill=[];state.refillIndex=0;state.refillUndo=[];state.currentBattles=[];state.lastBattles=[];
   state.message='';state.log=[];
   state.players.forEach((p,i)=>{
     const s=origin.players[i];
     p.front=[...s.front];p.back=[...s.back];p.reserve=[...s.reserve];p.deck=[...s.deck];
-    p.coins=s.coins;p.alive=s.alive;p.cpu=s.cpu;p.persona=s.persona||null;
+    p.coins=s.coins;p.alive=s.alive;p.cpu=s.cpu;p.persona=s.persona||null;p.miner=s.miner||null;
   });
 }
 function stateFromOrigin(saved) {
@@ -978,14 +1072,24 @@ function applyHistoryEvent(event) {
       if(game.mode==='text'){game.turn=game.setup;game.view=game.setup;}
       else game.view=null;
     } else {
-      game.phase='arrange';game.turn=0;game.view=game.mode==='text'||game.mode==='solo'?0:null;game.selection=null;game.message='';
+      game.round=2;game.phase='attack';game.turn=game.first??0;game.view=game.mode==='text'?game.first??0:game.mode==='solo'?0:null;game.selection=null;game.message='';
       if(game.mode==='text')game.turnNumber=1;
     }
     return;
   }
+  if(t==='mine'){
+    const p=player(game.turn);
+    p.miner=event.card;
+    const slot=p.back.indexOf(event.card)>=0?{row:'back',index:p.back.indexOf(event.card)}:{row:'front',index:p.front.indexOf(event.card)};
+    if(slot.index>=0)rememberSlot(game.turn,slot.row,slot.index);
+    game.actions++;
+    if(game.actions>=actionLimit())finishAttacks();
+    return;
+  }
+  if(t==='adjust'){game.actions++;game.phase='arrange';game.selection=null;game.message='';return;}
   if(t==='buy'){
     const owner=Number(event.card.split('-')[0]),p=player(Number.isInteger(owner)?owner:game.turn);
-    p.coins-=2;
+    p.coins-=HIRE_COST;
     const at=p.deck.indexOf(event.card);
     if(at>=0)p.deck.splice(at,1);
     p.reserve.push(event.card);
@@ -1009,11 +1113,15 @@ function applyHistoryEvent(event) {
   if(t==='resolve'){resolveBattle();return;}
   if(t==='finish'){finishAttacks();return;}
   if(t==='refillDone'){completeRefill();return;}
-  if(t==='income'){player(game.turn).coins+=game.kills+(hasCard(player(game.turn),'J')?1:0);advanceTurn();return;}
+  if(t==='income'){const p=player(game.turn);p.coins=Math.min(COIN_CAP,p.coins+game.kills+(hasCard(p,'J')?1:0));advanceTurn();return;}
   if(t==='arrangeSet'){
     const p=player(event.owner);
     p.front=[...event.front];p.back=[...event.back];p.reserve=[...event.reserve];
-    if(!['setup','refill'].includes(game.phase)){game.turn=event.owner;game.phase='attack';}
+    clampMiner(p);
+    if(!['setup','refill'].includes(game.phase)){
+      game.turn=event.owner;
+      if(game.actions>=actionLimit())finishAttacks();else game.phase='attack';
+    }
     game.selection=null;game.message='';
     return;
   }
@@ -1099,6 +1207,8 @@ function buildMatchReplay(saved) {
       else if(event.t==='phase'&&event.phase==='attack') push(`${player(game.turn).name} calls the charge.`);
       else if(event.t==='resolve') push(game.phase==='victory'?`${player(living()[0]).name} claims the crown.`:(game.message||'The clash is settled.'));
       else if(event.t==='finish') push(game.phase==='refill'?'The vanguard must be made whole.':'The charge is spent.');
+      else if(event.t==='mine') push(`${player(game.turn).name} sends the ${cardTitle(event.card||'0-2')} to the mines.`);
+      else if(event.t==='adjust') push(`${player(game.turn).name} adjusts the formation.`);
       else if(event.t==='refillDone'&&saved.history.events[eventIndex-1]?.t!=='arrangeSet') push('The vanguard is made whole.');
       else if(event.t==='arrangeSet') push(`${player(event.owner).name} sets the battle line.`);
       else if(event.t==='sync') push('A royal dispatch refreshes the field.');
@@ -1197,12 +1307,12 @@ function render() {
   if (game.phase === 'stalemate') return renderStalemate();
   if (game.view === null) {
     const idx=game.phase==='setup'?game.setup:game.turn;
-    if(['setup','arrange','buy'].includes(game.phase) && player(idx) && !player(idx).cpu && (game.mode!=='solo'||game.phase==='setup')) return renderVeil();
+    if(['setup','arrange','buy','attack'].includes(game.phase) && player(idx) && !player(idx).cpu && (game.mode!=='solo'||game.phase==='setup')) return renderVeil();
     game.view=idx;
   }
   if (game.phase === 'setup') {
     const p=player(game.setup), canBolster=p.front.includes(null)&&p.back.some(Boolean);
-    renderArena(game.setup,'setup',game.message || 'Good sire, array thy lines: let no rear rank outnumber the vanguard. Tap two cards to trade places.',`${canBolster?`<button class="button secondary" data-action="bolster">Bolster your lines</button>`:''}<button class="button wide" data-action="setup-done">Lock formation →</button>`);
+    renderArena(game.setup,'setup',game.message || `Round 1 · set your formation: every rear card needs a card in front of it. Tap two cards to trade places.${covered(player(game.setup))?'':' Every rear card needs a card in front of it.'}`,`${canBolster?`<button class="button secondary" data-action="bolster">Bolster your lines</button>`:''}<button class="button wide" data-action="setup-done" ${covered(player(game.setup))?'':'disabled'}>Lock formation →</button>`);
   } else if (game.phase === 'refill') renderRefill();
   else if (game.phase === 'queen') renderQueen();
   else if (game.phase === 'battle') renderBattle();
@@ -1213,10 +1323,10 @@ function slotAt(p, loc) { return p[loc]; }
 function clearBuyPrompt(){buyPrompt=null;clearTimeout(buyPromptTimer);}
 function prepareSlot(owner,location,index){
   const p=player(owner),empty=location!=='reserve'&&p[location]?.[index]==null;
-  if(empty&&!game.selection&&p.coins>=2&&p.deck.length){
+  if(empty&&!game.selection&&p.coins>=HIRE_COST&&p.deck.length){
     if(buyPrompt?.location===location&&buyPrompt.index===index){
       clearBuyPrompt();
-      p.coins-=2;
+      p.coins-=HIRE_COST;
       const drawn=drawCard(p);
       p.reserve.push(drawn);
       record({t:'buy',card:drawn});
@@ -1251,6 +1361,7 @@ function moveSlot(owner, location, index) {
   [a[from.index],b[index]] = [b[index] || null,a[from.index]];
   if (from.location==='reserve' && !a[from.index]) a.splice(from.index,1);
   if (location==='reserve' && !b[index]) b.splice(index,1);
+  clampMiner(p);
   game.selection=null;
 }
 function completeRefill() {
@@ -1263,7 +1374,6 @@ function completeRefill() {
 function finishAttacks() {
   game.refill=[];game.refillIndex=0;game.refillUndo=[];game.selection=null;
   game.phase='income';game.view=game.turn;game.message='';
-  record({t:'finish'});
 }
 function bolsterLines(owner) {
   const p=player(owner);
@@ -1282,6 +1392,7 @@ function bolsterLines(owner) {
 function defeat(owner,row,index) {
   const p = player(owner), id=p[row][index];
   p[row][index]=null;
+  if(p.miner===id)p.miner=null;
   if (rank(id)==='K') p.alive=false;
   else { p.deck.push(id); p.deck.sort((a,b)=>RANKS.indexOf(rank(a))-RANKS.indexOf(rank(b))); }
 }
@@ -1302,9 +1413,12 @@ function resolveBattle() {
     else defeat(game.turn,b.source.row,b.source.index);
   }
   game.scout=player(b.defender)[b.target.row][b.target.index]===b.defendCard?{player:b.defender,row:b.target.row,index:b.target.index,id:b.defendCard}:null;
-  reinforceFront(player(b.defender));
-  if(b.result==='defend')reinforceFront(player(game.turn));
-  game.attacks++;
+  rememberSlot(game.turn,b.source.row,b.source.index);
+  rememberSlot(b.defender,b.target.row,b.target.index);
+  closeRanks(player(b.defender));
+  if(b.result==='defend')closeRanks(player(game.turn));
+  pruneMemory();
+  game.actions++;
   game.pending=null; game.selection=null;
   record({t:'resolve'});
   if (living().length<=1) {
@@ -1313,59 +1427,189 @@ function resolveBattle() {
   }
   if (!player(game.turn).alive) { advanceTurn(); return; }
   game.phase='attack'; game.view=player(game.turn).cpu?null:game.turn; game.message='';
-  if (game.attacks>=attackLimit() || !player(game.turn).front.some(id=>id&&id!==game.usedAttacker) && !player(game.turn).back.some(id=>id&&id!==game.usedAttacker&&rank(id)==='10')) finishAttacks();
+  if (game.actions>=actionLimit()) finishAttacks();
 }
 
-function cardPriority(id) {
-  const r=rank(id);
-  return r==='Q'?18:r==='10'?17:r==='A'?15:r==='J'?13:r==='9'?12:r==='8'?11:r==='K'?-100:value(id);
-}
+const PLAYBOOK_DEFAULTS={jackBack:true,knightBack:true,assassinBack:false,queenFlank:true,cheapAttackers:true,probe:true,shuffle:true,knightSnipe:true,killKnight:true,sticky:true,neverAdjust:false,mineValue:1.2,jitter:.1};
+let MINING_ROWS=['front'],HIRE_COST=2,COIN_CAP=3;
 const AI_TACTICS={
-  serf:{risk:0,jitter:16,guardedKing:[7,7]},
-  squire:{risk:1,jitter:.025,guardedKing:[7,7]},
-  knight:{risk:1,jitter:.025,guardedKing:[3.8,2.2],queenTarget:4,knightTarget:2.5,jackTarget:2,assassinTarget:3,queenGuardAware:true},
+  serf:{skill:.35,memory:1,reposition:2,shakeChance:.15},
+  squire:{skill:.75,memory:2,reposition:3,shakeChance:.1},
+  knight:{skill:1,memory:3,reposition:4,shakeChance:.05},
 };
+function tacticsFor(p){return {...PLAYBOOK_DEFAULTS,...(AI_TACTICS[p.persona]||AI_TACTICS.squire)};}
+const formationMemory=new WeakMap();
+let turnAdjusted=false,minePick=false;
+function mineCandidates(p){
+  if(!p||p.miner)return [];
+  const out=[];
+  for(const row of ['back','front'].filter(r=>MINING_ROWS.includes(r)))for(let i=0;i<p[row].length;i++)if(p[row][i]&&isPeasant(p[row][i]))out.push({row,index:i,id:p[row][i]});
+  return out;
+}
+function clampMiner(p){ if(p?.miner&&!MINING_ROWS.some(r=>p[r].includes(p.miner)))p.miner=null; }
+function pickMiner(p){
+  const eligible=mineCandidates(p);
+  const back=eligible.filter(c=>c.row==='back');
+  const pool=back.length?back:eligible;
+  return pool.sort((a,b)=>value(a.id)-value(b.id))[0]||null;
+}
+function commitMine(p,candidate){
+  p.miner=candidate.id;
+  rememberSlot(game.players.indexOf(p),candidate.row,candidate.index);
+  minePick=false;
+  game.actions++;
+  record({t:'mine',card:candidate.id});
+  recordComputer('mine');
+  if(game.actions>=actionLimit())finishAttacks();
+}
+function memoryHit(enemy,row,index,tactics){
+  // A mining peasant works face-up: every bot knows that slot without scouting.
+  const owner=player(enemy);
+  if(owner?.miner&&owner[row]?.[index]===owner.miner)return owner.miner;
+  const entry=(game?.memory||[]).find(m=>m.player===enemy&&m.row===row&&m.index===index&&game.round-m.round<tactics.memory);
+  return entry?entry.id:null;
+}
+function rememberSlot(owner,row,index){
+  if(!game.memory)game.memory=[];
+  const id=player(owner)?.[row]?.[index]||null;
+  game.memory=game.memory.filter(m=>!(m.player===owner&&m.row===row&&m.index===index));
+  if(id)game.memory.push({player:owner,row,index,id,round:game.round});
+  if(game.memory.length>24)game.memory.splice(0,game.memory.length-24);
+}
+function pruneMemory(){
+  if(!game.memory)return;
+  game.memory=game.memory.filter(m=>player(m.player)?.[m.row]?.[m.index]===m.id);
+}
+function exposedMoment(selfIndex,tactics){
+  return selfIndex>=0&&(living().some(i=>i!==selfIndex&&player(i).back.every(id=>!id))
+    ||(game.memory||[]).some(m=>m.player!==selfIndex&&m.row==='front'&&rank(m.id)==='K'&&game.round-m.round<tactics.memory));
+}
+function needsAdjust(p,tactics){
+  if(tactics.neverAdjust||turnAdjusted)return false;
+  if(p.coins>=HIRE_COST&&p.deck.length&&p.reserve.length<3)return true;
+  const selfIndex=game.players.indexOf(p);
+  const seen=formationMemory.get(p);
+  const rowKey=row=>p[row].filter(Boolean).slice().sort().join(',');
+  if(seen&&(seen.front!==rowKey('front')||seen.back!==rowKey('back')))return true;
+  let kingPos=null;
+  for(const row of ['front','back'])for(let i=0;i<p[row].length;i++)if(p[row][i]&&rank(p[row][i])==='K')kingPos={row,index:i};
+  if(kingPos&&!adjacentPeasants(p,kingPos.row,kingPos.index).length&&[...p.front,...p.back,...p.reserve].some(id=>id&&isPeasant(id)))return true;
+  if(exposedMoment(selfIndex,tactics))return true;
+  return random(1000)/1000<tactics.shakeChance;
+}
+function formationAnchor(p,row,index){
+  const r=rank(p[row][index]||'');if(r==='K'||r==='Q')return true;
+  return isPeasant(p[row][index]||'')&&[index-1,index+1].some(i=>i>=0&&i<p[row].length&&['K','Q'].includes(rank(p[row][i]||'')));
+}
+function repositionAI(p,tactics){
+  const swaps=random((tactics.reposition||0)+1);
+  for(let s=0;s<swaps;s++){
+    const row=random(2)?'back':'front';
+    const movable=p[row].map((id,i)=>id&&!formationAnchor(p,row,i)?i:-1).filter(i=>i>=0);
+    if(movable.length<2)continue;
+    const a=movable[random(movable.length)],b=movable[random(movable.length)];
+    if(a===b)continue;
+    [p[row][a],p[row][b]]=[p[row][b],p[row][a]];
+  }
+}
 function arrangeAI(p) {
-  const frontLen=p.front?.length||3, backLen=p.back?.length||3;
+  const F=p.front?.length||3, B=p.back?.length||3;
   const cards=[...p.front,...p.back,...p.reserve].filter(Boolean);
-  const king=cards.find(id=>rank(id)==='K');
-  if(king && cards.length===1){p.front=[king,...Array(frontLen-1).fill(null)];p.back=Array(backLen).fill(null);p.reserve=[];return;}
-  if(p.persona==='serf'){
-    const field=shuffle(cards.filter(id=>id!==king));
-    p.front=[...field.slice(0,frontLen),...Array(Math.max(0,frontLen-field.length)).fill(null)];
-    const rear=[king,...field.slice(frontLen)];
-    p.back=[...rear.slice(0,backLen),...Array(Math.max(0,backLen-rear.length)).fill(null)];
-    p.reserve=rear.slice(backLen);
+  const tactics=tacticsFor(p);
+  const key=cards.slice().sort().join(',');
+  const frontKey=p.front.filter(Boolean).slice().sort().join(','), backKey=p.back.filter(Boolean).slice().sort().join(',');
+  const selfIndex=game?.players?.indexOf(p)??-1;
+  const enemies=selfIndex>=0?living().filter(i=>i!==selfIndex):[];
+  const exposed=exposedMoment(selfIndex,tactics);
+  const snipe=enemies.some(i=>player(i).front.every(id=>!id)&&player(i).back.some(Boolean));
+  // A walled enemy can only be reached by a front-line Knight; parked in back he just waits.
+  const siege=tactics.knightSnipe&&enemies.some(i=>player(i).back.some(Boolean)&&player(i).front.every(Boolean));
+  const posture=(exposed?1:0)|(snipe?2:0)|(siege?4:0);
+  const previous=formationMemory.get(p);
+  if(tactics.sticky&&previous&&previous.key===key&&previous.front===frontKey&&previous.back===backKey&&previous.posture===posture)return;
+  const remember=()=>formationMemory.set(p,{key,front:p.front.filter(Boolean).slice().sort().join(','),back:p.back.filter(Boolean).slice().sort().join(','),posture});
+  if(random(1000)/1000>=tactics.skill){
+    const field=shuffle(cards.slice());
+    p.front=field.slice(0,F);while(p.front.length<F)p.front.push(null);
+    p.back=field.slice(F,F+B);while(p.back.length<B)p.back.push(null);
+    p.reserve=field.slice(F+B);
+    const inReserve=p.reserve.findIndex(id=>rank(id)==='K');
+    if(inReserve>=0){
+      const row=p.back.some(Boolean)?'back':'front';
+      const i=p[row].findIndex(Boolean);
+      if(i>=0)[p[row][i],p.reserve[inReserve]]=[p.reserve[inReserve],p[row][i]];
+    }
+    const frontKing=p.front.findIndex(id=>id&&rank(id)==='K');
+    const backCards=p.back.map((id,i)=>id?i:-1).filter(i=>i>=0);
+    if(frontKing>=0&&backCards.length){const j=backCards[random(backCards.length)];[p.front[frontKing],p.back[j]]=[p.back[j],p.front[frontKing]];}
+    closeRanks(p);
+    remember();
     return;
   }
-  if(p.persona==='knight' && king){
-    const field=cards.filter(id=>id!==king),queen=field.find(id=>rank(id)==='Q');
-    const peasants=field.filter(isPeasant).sort((a,b)=>value(b)-value(a));
-    const queenAlly=queen?peasants[0]:null;
-    const guard=field.length>frontLen?peasants.findLast(id=>id!==queenAlly):null;
-    const front=[...(queen?[queen]:[]),...(queenAlly?[queenAlly]:[])];
-    front.push(...field.filter(id=>id!==guard&&!front.includes(id)).sort((a,b)=>cardPriority(b)-cardPriority(a)));
-    p.front=[...front.slice(0,frontLen),...Array(Math.max(0,frontLen-front.length)).fill(null)];
-    const rest=field.filter(id=>!p.front.includes(id));
-    const rear=[...Array(backLen).fill(null)];
-    rear[1]=king;
-    for(const id of rest.slice(0,backLen-1))rear[rear[0]==null?0:rear.findIndex((slot,i)=>i!==1&&!slot)]=id;
-    p.back=rear;p.reserve=rest.slice(backLen-1);
-    return;
+  const byRank=r=>cards.find(id=>rank(id)===r);
+  const king=byRank('K'),queen=byRank('Q'),jack=byRank('J'),knight=byRank('10'),assassin=byRank('A');
+  const peasants=cards.filter(isPeasant).sort((a,b)=>value(a)-value(b));
+  const wantsFlank=tactics.queenFlank&&!!queen;
+  const bodyguard1=peasants[0]||null;
+  const flankPeasants=wantsFlank?peasants.slice(1,3):[];
+  const bodyguard2=peasants[1+flankPeasants.length]||null;
+  const backWanted=[king,bodyguard1,tactics.jackBack?jack:null,tactics.knightBack&&!snipe&&!siege?knight:null,bodyguard2,tactics.assassinBack&&!exposed?assassin:null].filter(Boolean).slice(0,B);
+  const back=Array(B).fill(null);
+  const kingIndex=B>2?(tactics.shuffle?1+random(B-2):1):Math.min(1,B-1);
+  if(king)back[kingIndex]=king;
+  const guardSlots=[kingIndex-1,kingIndex+1].filter(i=>i>=0&&i<B&&!back[i]);
+  if(tactics.shuffle&&guardSlots.length>1&&random(2))guardSlots.reverse();
+  [bodyguard1,bodyguard2].filter(id=>id&&backWanted.includes(id)).forEach((id,i)=>{if(guardSlots[i]!=null)back[guardSlots[i]]=id;});
+  for(const id of backWanted.filter(id=>!back.includes(id))){
+    const free=back.map((slot,i)=>slot?-1:i).filter(i=>i>=0);
+    if(free.length)back[tactics.shuffle?free[random(free.length)]:free[0]]=id;
   }
-  const queen=cards.find(id=>rank(id)==='Q');
-  let front=[];
-  if (queen) {
-    const neighbor=cards.filter(id=>isPeasant(id)).sort((a,b)=>cardPriority(b)-cardPriority(a))[0];
-    front=[queen,...(neighbor?[neighbor]:[])];
+  const onBack=new Set(back.filter(Boolean));
+  const front=Array(F).fill(null);
+  if(queen){
+    const queenIndex=F>2?(tactics.shuffle?1+random(F-2):1):Math.min(1,F-1);
+    front[queenIndex]=queen;
+    if(wantsFlank){
+      const sides=[queenIndex-1,queenIndex+1].filter(i=>i>=0&&i<F);
+      if(tactics.shuffle&&sides.length>1&&random(2))sides.reverse();
+      flankPeasants.filter(id=>!onBack.has(id)).forEach((id,i)=>{if(sides[i]!=null)front[sides[i]]=id;});
+    }
   }
-  front.push(...cards.filter(id=>id!==king&&!front.includes(id)).sort((a,b)=>cardPriority(b)-cardPriority(a)));
-  front=front.slice(0,frontLen);
-  const rest=cards.filter(id=>!front.includes(id)).sort((a,b)=>cardPriority(b)-cardPriority(a));
-  p.front=[...front,...Array(frontLen-front.length).fill(null)];
-  p.back=[king,...rest.filter(id=>id!==king).slice(0,backLen-1)];
-  while(p.back.length<backLen) p.back.push(null);
-  p.reserve=rest.filter(id=>id!==king).slice(backLen-1);
+  const placed=new Set([...back,...front].filter(Boolean));
+  let fillers=cards.filter(id=>!placed.has(id));
+  if(wantsFlank){
+    // Assassin, then the front-sniping Knight, then the income Jack, then peasant probers.
+    const royals=[assassin,knight,jack].filter(id=>id&&fillers.includes(id));
+    fillers=[...royals,...fillers.filter(isPeasant).sort((a,b)=>value(b)-value(a))];
+  } else {
+    fillers=fillers.sort((a,b)=>value(b)-value(a)||RANKS.indexOf(rank(b))-RANKS.indexOf(rank(a)));
+  }
+  for(const id of fillers){
+    const slot=front.findIndex(s=>!s);
+    if(slot>=0)front[slot]=id;
+  }
+  if(!front.some(Boolean)){
+    // A depleted line still needs an attacker; parked cards cannot fight from the rear.
+    const i=back.findLastIndex(id=>id&&id!==king);
+    const j=i>=0?i:back.findLastIndex(Boolean);
+    if(j>=0){front[0]=back[j];back[j]=null;}
+  }
+  const onBoard=new Set([...back,...front].filter(Boolean));
+  p.front=front;
+  p.back=back;
+  p.reserve=cards.filter(id=>!onBoard.has(id));
+  const rescue=stray=>{
+    const board=[...p.front,...p.back].find(id=>id&&id!==stray&&rank(id)!=='K');
+    const i=board?p.front.indexOf(board):-1;
+    if(i>=0){p.front[i]=stray;p.reserve[p.reserve.indexOf(stray)]=board;return;}
+    const j=board?p.back.indexOf(board):-1;
+    if(j>=0){p.back[j]=stray;p.reserve[p.reserve.indexOf(stray)]=board;}
+  };
+  const strayKing=p.reserve.find(id=>rank(id)==='K');
+  if(strayKing)rescue(strayKing);
+  if(queen&&p.reserve.includes(queen))rescue(queen);
+  closeRanks(p);
+  remember();
 }
 function refillAI(p) {
   for(let i=0;i<p.front.length;i++) if(!p.front[i]) {
@@ -1375,40 +1619,54 @@ function refillAI(p) {
     p.front[i]=p.back[from]; p.back[from]=null;
   }
 }
-function chooseAIAttack() {
-  const self=player(game.turn);
-  const persona=self.persona||'squire';
-  const tactics=AI_TACTICS[persona]||AI_TACTICS.squire;
+function legalAttacks(self) {
   const targets=[];
   for(const enemy of living()) if(enemy!==game.turn) {
     for(const row of ['front','back']) for(let index=0;index<player(enemy)[row].length;index++) if(player(enemy)[row][index]) targets.push({enemy,row,index});
   }
   const choices=[];
   for(const sourceRow of ['front','back']) for(let index=0;index<self[sourceRow].length;index++) {
-    const id=self[sourceRow][index]; if(!id || id===game.usedAttacker || sourceRow==='back' && rank(id)!=='10') continue;
+    const id=self[sourceRow][index]; if(!id || id===game.usedAttacker || id===self.miner || sourceRow==='back' && rank(id)!=='10') continue;
     for(const t of targets) {
       if(t.row==='back' && (rank(id)!=='10' || sourceRow==='back')) continue;
-      // Evaluate a probability model for a face-down card, never its actual rank.
-      const seen=persona==='knight'&&game.scout?.player===t.enemy&&game.scout.row===t.row&&game.scout.index===t.index?game.scout.id:null;
-      const guesses=seen?[[rank(seen),1]]:t.row==='back'?[['K',.48],['Q',.12],['J',.12],['10',.08],['8',.2]]:[['Q',.23],['J',.18],['10',.14],['A',.12],['8',.33]];
-      let score=0;
-      const occupiedGuard=[t.index-1,t.index+1].filter(i=>i>=0&&i<player(t.enemy)[t.row].length&&player(t.enemy)[t.row][i]).length;
-      for(const [r,probability] of guesses) {
-        const imagined=`${t.enemy}-${r}`;
-        const attackCount=1+(value(id)>value(imagined)?1:0)+(rank(id)==='10'&&t.row==='front'?1:0)+(rank(id)==='Q'&&adjacentPeasants(self,sourceRow,index).length?1:0);
-        const defendCount=1+(value(imagined)>value(id)?1:0);
-        const ordinary=diceOdds(attackCount,defendCount);
-        const odds=ordinary;
-        const targetValue=r==='K'?occupiedGuard?tactics.guardedKing[occupiedGuard-1]:7:r==='Q'?tactics.queenTarget||2.4:r==='10'?tactics.knightTarget||1.7:r==='J'?tactics.jackTarget||1:r==='A'?tactics.assassinTarget||1:1;
-        const ownValue=rank(id)==='K'?7:rank(id)==='Q'?tactics.queenGuardAware&&adjacentPeasants(self,sourceRow,index).length?1:2.6:rank(id)==='10'?1.8:1;
-        score+=probability*(odds.win*(1+targetValue)-tactics.risk*odds.lose*(rank(id)==='A'?0:ownValue));
-      }
-      if(t.row==='front' && player(t.enemy).front.filter(Boolean).length===1) score+=.15;
-      score+=(random(1000)/1000)*tactics.jitter;
-      choices.push({sourceRow,sourceIndex:index,...t,score});
+      choices.push({sourceRow,sourceIndex:index,...t,score:0});
     }
   }
-  return choices.reduce((best,choice)=>!best||choice.score>best.score?choice:best,null);
+  return choices;
+}
+function chooseAIAttack() {
+  const self=player(game.turn);
+  const tactics=tacticsFor(self);
+  const choices=legalAttacks(self);
+  if(!choices.length)return null;
+  if(random(1000)/1000>=tactics.skill)return choices[random(choices.length)];
+  for(const choice of choices) {
+    const id=self[choice.sourceRow][choice.sourceIndex];
+    // Evaluate a probability model for a face-down card, never its actual rank.
+    const seen=memoryHit(choice.enemy,choice.row,choice.index,tactics);
+    const guesses=seen?[[rank(seen),1]]:choice.row==='back'?[['K',.48],['Q',.12],['J',.12],['10',.08],['8',.2]]:[['Q',.23],['J',.18],['10',.14],['A',.12],['8',.33]];
+    let score=0;
+    const occupiedGuard=[choice.index-1,choice.index+1].filter(i=>i>=0&&i<player(choice.enemy)[choice.row].length&&player(choice.enemy)[choice.row][i]).length;
+    for(const [r,probability] of guesses) {
+      const imagined=`${choice.enemy}-${r}`;
+      const attackCount=1+(value(id)>value(imagined)?1:0)+(rank(id)==='10'&&choice.row==='front'?1:0)+(rank(id)==='Q'&&adjacentPeasants(self,choice.sourceRow,choice.sourceIndex).length?1:0);
+      const defendCount=1+(value(imagined)>value(id)?1:0);
+      const odds=diceOdds(attackCount,defendCount);
+      const targetValue=r==='K'?occupiedGuard?[3.8,2.2][occupiedGuard-1]:7:r==='Q'?3:r==='10'?tactics.killKnight?3:1.7:r==='J'?2.5:r==='A'?1.5:1+value(imagined)/20;
+      const ownValue=rank(id)==='K'?7:rank(id)==='Q'?adjacentPeasants(self,choice.sourceRow,choice.sourceIndex).length?1:3:rank(id)==='10'?2.5:rank(id)==='J'?2.5:rank(id)==='A'?0:tactics.cheapAttackers?.8+value(id)/10:1;
+      score+=probability*(odds.win*(1+targetValue)-odds.lose*ownValue);
+    }
+    if(choice.row==='front' && player(choice.enemy).front.filter(Boolean).length===1) score+=.15;
+    if(tactics.knightSnipe&&rank(id)==='10'&&choice.row==='back')score+=.4;
+    // A full front line is a wall: the back line is the only road to the King.
+    if(choice.row==='back'&&player(choice.enemy).front.every(Boolean))score+=.5;
+    if(tactics.probe&&isPeasant(id)&&value(id)>=5&&!seen&&choice.row==='front')score+=.15;
+    // Killing the enemy's miner denies a coin, and its face is already known.
+    if(player(choice.enemy).miner===player(choice.enemy)[choice.row][choice.index])score+=.6;
+    score+=(random(1000)/1000)*tactics.jitter;
+    choice.score=score;
+  }
+  return choices.reduce((best,choice)=>choice.score>best.score?choice:best,choices[0]);
 }
 function computeDiceOdds(a,d) {
   let win=0,lose=0;
@@ -1425,15 +1683,42 @@ function diceOdds(a,d) { return ODDS[a][d]; }
 function runAI(maxSteps=2000) {
   let steps=0;
   while(game.phase!=='victory' && player(game.turn).cpu) {
-    if(++steps>maxSteps) { game.phase='stalemate';game.message='The computer could not bring this war to an end.';return; }
+    if(++steps>maxSteps) { game.phase='stalemate';game.pending=null;game.selection=null;game.message='The computer could not bring this war to an end.';return; }
     const p=player(game.turn);
     if(game.phase==='buy') {
-      while(p.coins>=2 && p.deck.length && p.reserve.length<3) { p.coins-=2; const drawn=drawCard(p); p.reserve.push(drawn); record({t:'buy',card:drawn}); }
       game.phase='arrange';
-    } else if(game.phase==='arrange') { arrangeAI(p); recordFormation(game.turn); game.phase='attack'; }
-    else if(game.phase==='attack') {
-      const choice=game.attacks<attackLimit() && chooseAIAttack();
-      if(!choice) { finishAttacks(); continue; }
+    } else if(game.phase==='arrange') {
+      while(p.coins>=HIRE_COST && p.deck.length && p.reserve.length<3) { p.coins-=HIRE_COST; const drawn=drawCard(p); p.reserve.push(drawn); record({t:'buy',card:drawn}); }
+      arrangeAI(p);
+      repositionAI(p,tacticsFor(p));
+      closeRanks(p);
+      clampMiner(p);
+      recordFormation(game.turn);
+      recordComputer('adjust');
+      game.phase='attack';
+    } else if(game.phase==='attack') {
+      if(game.actions>=actionLimit()) { finishAttacks(); continue; }
+      const tactics=tacticsFor(p);
+      let choice=null;
+      if(random(1000)/1000<tactics.skill) {
+        if(needsAdjust(p,tactics)) { game.actions++;turnAdjusted=true;record({t:'adjust'});game.phase='arrange';continue; }
+        choice=chooseAIAttack();
+        const miner=pickMiner(p);
+        const mineScore=miner?tactics.mineValue*(miner.row==='back'?.9:.55):-Infinity;
+        if(miner&&!(choice&&choice.score>=mineScore)){commitMine(p,miner);continue;}
+        if(!choice){game.actions++;turnAdjusted=true;record({t:'adjust'});game.phase='arrange';continue;}
+      } else {
+        const legal=legalAttacks(p);
+        const options=[...(pickMiner(p)?['mine']:[]),...(tactics.neverAdjust||turnAdjusted?[]:['adjust']),...(legal.length?['attack']:[])];
+        const pick=options[random(options.length)];
+        if(pick==='adjust') { game.actions++;turnAdjusted=true;record({t:'adjust'});game.phase='arrange';continue; }
+        if(pick==='mine') { commitMine(p,pickMiner(p));continue; }
+        if(pick==='attack')choice=legal[random(legal.length)];
+      }
+      if(!choice){
+        if(tactics.neverAdjust){finishAttacks();continue;}
+        game.actions++;turnAdjusted=true;record({t:'adjust'});game.phase='arrange';continue;
+      }
       game.selection={location:choice.sourceRow,index:choice.sourceIndex};
       const target={owner:choice.enemy,row:choice.row,index:choice.index};
       recordComputer('reveal',target);
@@ -1448,7 +1733,7 @@ function runAI(maxSteps=2000) {
       if(game.refill.length) { game.view=null; return; }
       game.phase='income';
     } else if(game.phase==='income') {
-      p.coins+=game.kills+(hasCard(p,'J')?1:0);
+      p.coins=Math.min(COIN_CAP,p.coins+game.kills+(hasCard(p,'J')?1:0));
       record({t:'income'});
       advanceTurn();
     } else return;
@@ -1456,11 +1741,12 @@ function runAI(maxSteps=2000) {
 }
 function attack(targetPlayer,row,index) {
   const source=game.selection;
-  if(game.phase!=='attack'||!player(game.turn).alive||game.attacks>=attackLimit())return;
+  if(game.phase!=='attack'||!player(game.turn).alive||game.actions>=actionLimit())return;
   if (!source || !['front','back'].includes(source.location) || !player(game.turn)[source.location][source.index]) return;
   if (targetPlayer===game.turn || !player(targetPlayer)?.alive || !player(targetPlayer)[row]?.[index]) return;
   const attackCard=player(game.turn)[source.location][source.index], defendCard=player(targetPlayer)[row][index];
   if(attackCard===game.usedAttacker){game.message='This champion has already attacked. Choose another for thy second charge.';game.selection=null;return;}
+  if(attackCard===player(game.turn).miner){game.message='That peasant is down in the mines until your next turn.';game.selection=null;return;}
   if(source.location==='back' && (rank(attackCard)!=='10' || row!=='front')) { game.message='A back-line Knight can attack only the enemy front line.'; return; }
   if (row==='back' && rank(attackCard)!=='10') { game.message='Only a Knight (10) can attack the back line.'; return; }
   const sourceSlot={row:source.location,index:source.index}, target={player:targetPlayer,row,index};
@@ -1657,10 +1943,10 @@ app.addEventListener('click', event => {
       }
     }
     if(existing){
-      const same=StateCodec.encode({...existing.game,restoreNotices:[]},{history:false})===StateCodec.encode({...restored,restoreNotices:[]},{history:false});
+      const same=StateCodec.encode({...existing.game,restoreNotices:[],log:[]},{history:false})===StateCodec.encode({...restored,restoreNotices:[],log:[]},{history:false});
       const setupForward=restored.turnNumber===1&&existing.game.turnNumber===1&&
-        (existing.game.phase==='invite'&&(restored.phase==='setup'||restored.phase==='arrange')||
-        existing.game.phase==='setup'&&(restored.phase==='setup'&&restored.setup>existing.game.setup||restored.phase==='arrange'&&restored.turn===0));
+        (existing.game.phase==='invite'&&['setup','arrange','attack'].includes(restored.phase)||
+        existing.game.phase==='setup'&&(restored.phase==='setup'&&restored.setup>existing.game.setup||['arrange','attack'].includes(restored.phase)&&restored.turn===(restored.first??0)));
       if(restored.turnNumber<existing.game.turnNumber||restored.turnNumber===existing.game.turnNumber&&!same&&!setupForward){
         incomingBackup=null;incomingKind=null;incomingSeat=null;
         backupError='This link is older than your saved match or conflicts with it. Your saved game was kept.';
@@ -1669,6 +1955,7 @@ app.addEventListener('click', event => {
     }
     if(commit(()=>{
       const keep=(!restored.history?.origin && existing?.game.history?.origin)?existing.game.history:null;
+      const keepLog=kind==='turn'&&!(restored.log?.length)&&existing?.game.log?.length?existing.game.log:null;
       const localNotices=kind==='turn'?existing?.game.restoreNotices?.filter(n=>n.seat===Number(recallSeat(restored.matchId)))||[]:[];
       game=restored;slotId=existing?.id??makeSlotId();backupText='';hubOpen=false;scoresOpen=false;
       if(localNotices.length)game.restoreNotices=[...game.restoreNotices.filter(n=>n.seat!==localNotices[0].seat),...localNotices];
@@ -1679,6 +1966,7 @@ app.addEventListener('click', event => {
         game.history=keep;
         if(kind==='turn' && existing && restored.turnNumber>existing.game.turnNumber) record({t:'sync',origin:captureOrigin(restored)});
       }
+      if(keepLog)game.log=keepLog;
     })) {
       if(restored.mode==='text'&&seat!=null&&kind==='backup'&&(recallSeat(restored.matchId)==null||Number(recallSeat(restored.matchId))===seat)){
         persistSeat(restored.matchId,seat);
@@ -1721,7 +2009,7 @@ app.addEventListener('click', event => {
     if (action==='slot') {
       const owner=game.phase==='setup'?game.setup:game.phase==='refill'?game.refill[game.refillIndex]:game.turn;
       if (['setup','buy','arrange','refill'].includes(game.phase)) {
-        if(['buy','arrange'].includes(game.phase))prepareSlot(owner,button.dataset.location,index);
+        if(game.phase==='arrange')prepareSlot(owner,button.dataset.location,index);
         else moveSlot(owner,button.dataset.location,index);
         if(button.dataset.location==='reserve')reserveOpen=false;
       }
@@ -1729,47 +2017,47 @@ app.addEventListener('click', event => {
     }
     if (action==='setup-done' && game.phase==='setup') {
       const p=player(game.setup);
-      if (p.back.filter(Boolean).length>p.front.filter(Boolean).length) { game.message='Your back line cannot outnumber your front line.'; return; }
+      if (!covered(p)) { game.message='Every rear card needs a card in front of it.'; return; }
       recordFormation(game.setup);
       if (game.setup+1<game.players.length && game.mode!=='solo') {
         game.setup++;game.selection=null;game.message='';
         if(game.mode==='text'){game.turn=game.setup;game.view=game.setup;}
         else game.view=null;
       } else {
-        game.phase='arrange';game.turn=0;game.view=game.mode==='text'||game.mode==='solo'?0:null;game.selection=null;
+        game.round=2;game.phase='attack';game.turn=game.first??0;game.view=game.mode==='text'?game.first??0:game.mode==='solo'?0:null;game.selection=null;
         game.message='';
         if(game.mode==='text')game.turnNumber=1;
       }
       record({t:'setupDone'});
       return;
     }
-    if (action==='buy' && game.phase==='buy') { const p=player(game.turn); if (p.coins>=2 && p.deck.length) { p.coins-=2; const drawn=drawCard(p); p.reserve.push(drawn); record({t:'buy',card:drawn}); } return; }
+    if (action==='buy' && game.phase==='arrange') { const p=player(game.turn); if (p.coins>=HIRE_COST && p.deck.length) { p.coins-=HIRE_COST; const drawn=drawCard(p); p.reserve.push(drawn); record({t:'buy',card:drawn}); } return; }
     if (action==='next') {
-      if (game.phase==='arrange' && player(game.turn).back.filter(Boolean).length>player(game.turn).front.filter(Boolean).length) { game.message='Move cards forward: your back line cannot outnumber your front line.'; return; }
-      if (game.phase==='buy'||game.phase==='arrange') {recordFormation(game.turn);game.phase='attack';}
+      if (game.phase==='arrange' && !covered(player(game.turn))) { game.message='Every rear card needs a card in front of it.'; return; }
+      if (game.phase==='arrange') {recordFormation(game.turn);if(game.actions>=actionLimit())finishAttacks();else game.phase='attack';}
+      else if (game.phase==='buy') {recordFormation(game.turn);game.phase='attack';}
       clearBuyPrompt();
       game.selection=null; game.message=''; return;
     }
-    if (action==='attacker' && game.phase==='attack') {
-      clearRetreat();
-      const row=button.dataset.location,id=player(game.turn)[row]?.[index];
-      if (id && id!==game.usedAttacker && (row==='front' || row==='back' && rank(id)==='10')) game.selection=game.selection?.location===row&&game.selection.index===index?null:{location:row,index};
+    if (action==='adjust' && game.phase==='attack') { game.actions++;turnAdjusted=true;minePick=false;record({t:'adjust'});game.phase='arrange';game.selection=null;game.message=''; return; }
+    if (action==='mine' && game.phase==='attack') { minePick=!minePick;game.selection=null; return; }
+    if (action==='miner' && game.phase==='attack' && minePick) {
+      const p=player(game.turn),row=button.dataset.location,id=p[row]?.[index];
+      const candidate=mineCandidates(p).find(c=>c.row===row&&c.index===index&&c.id===id);
+      if(candidate)commitMine(p,candidate);
       return;
     }
-    if (action==='target' && game.phase==='attack') { clearRetreat();const [owner,row]=button.dataset.location.split(':'); attack(Number(owner),row,index); return; }
+    if (action==='attacker' && game.phase==='attack') {
+      minePick=false;
+      const row=button.dataset.location,id=player(game.turn)[row]?.[index];
+      if (id && id!==game.usedAttacker && id!==player(game.turn).miner && (row==='front' || row==='back' && rank(id)==='10')) game.selection=game.selection?.location===row&&game.selection.index===index?null:{location:row,index};
+      return;
+    }
+    if (action==='target' && game.phase==='attack') { const [owner,row]=button.dataset.location.split(':'); attack(Number(owner),row,index); return; }
     if (action==='battle-next' && game.phase==='battle') { resolveBattle(); return; }
     if (action==='sacrifice' && game.phase==='queen') { resolveBattle(); if(player(game.turn).cpu) runAIWithReplay(); return; }
-    if (action==='finish-attacks' && game.phase==='attack') {
-      const key=retreatKey();
-      if(retreatArmed!==key){
-        retreatArmed=key;clearTimeout(retreatTimer);
-        retreatTimer=setTimeout(()=>{if(retreatArmed===key){retreatArmed=null;if(game?.phase==='attack')render();}},5000);
-        render();return;
-      }
-      clearRetreat();finishAttacks();return;
-    }
     if (action==='refill-done' && game.phase==='refill') { const p=player(game.refill[game.refillIndex]); if (!p.front.includes(null) || !p.back.some(Boolean)) { completeRefill(); if(player(game.turn).cpu) runAIWithReplay(); } return; }
-    if (action==='income' && game.phase==='income') { player(game.turn).coins+=game.kills+(hasCard(player(game.turn),'J')?1:0); record({t:'income'}); advanceTurn(); runAIWithReplay(); }
+    if (action==='income' && game.phase==='income') { const p=player(game.turn); p.coins=Math.min(COIN_CAP,p.coins+game.kills+(hasCard(p,'J')?1:0)); record({t:'income'}); advanceTurn(); runAIWithReplay(); }
   });
 });
 function endMatchHold() {

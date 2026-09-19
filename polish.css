@@ -118,3 +118,5 @@ body{min-height:100dvh;overflow-x:hidden;overscroll-behavior:none}
 .rating-opponents>div{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-top:1px solid #ffffff26;font-size:.9rem}
 .rating-opponents span{color:#d9e2d7}
 @media(max-height:700px){.tutorial-side .card{aspect-ratio:1.6}.tutorial-guidance{font-size:.9rem}}
+.card.mining{outline:2px solid #b88432;outline-offset:1px}
+.card .mine-badge{position:absolute;top:2px;right:5px;font-size:.8rem;opacity:.9}
