@@ -55,7 +55,7 @@ try { tutorialOpen=localStorage.getItem('regicidious.tutorial.open')==='1';tutor
 const milliseconds=n=>`${n.toFixed(2)} ms`;
 const timingLine=()=>timings.render===null?'':`Last move: logic ${milliseconds(timings.logic)} · save ${milliseconds(timings.save)} · render ${milliseconds(timings.render)}`;
 const creditLine='Original game by Shane Holmgren<br>Digital adaptation by Jamon Holmgren, <a href="https://jammin.games/" target="_blank" rel="noopener noreferrer">Jammin Games</a>';
-const BUILD=42;
+const BUILD=43;
 const buildLine=BUILD>0?`Build ${BUILD}`:'Build local';
 
 try {
@@ -626,7 +626,7 @@ function renderScoreImport() {
   frame(`<section class="panel dispatch"><div class="phase">Personal score backup</div><h1>Restore high scores?</h1><p>${expanded} Expanded and ${classic} Classic scores${incomingRatings?`, plus ${incomingRatings.length} rating results`:''}.</p><p>Your current scores and games stay here. Results you already have are kept once.</p><button class="button wide" data-action="restore-scores">Merge score table</button></section>`);
 }
 function playerChips(saved) {
-  return `<div class="dispatch-seats">${saved.players.map((p,i)=>`<span class="suit-chip">${p.emoji} ${SUITS[i]} ${escapeHTML(p.name)}</span>`).join('')}</div>`;
+  return `<div class="dispatch-seats">${saved.players.map((p,i)=>`<span class="suit-chip${p.alive?'':' fallen-kingdom'}"${p.alive?'':' title="Fallen kingdom"'}>${p.emoji} ${SUITS[i]} ${escapeHTML(p.name)}</span>`).join('')}</div>`;
 }
 function renderImport() {
   const g=incomingBackup, victory=g.phase==='victory', invitation=g.phase==='invite', turn=incomingKind==='turn';

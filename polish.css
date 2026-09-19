@@ -63,6 +63,7 @@ body{min-height:100dvh;overflow-x:hidden;overscroll-behavior:none}
 .notice a,.arena-sheet a{color:#f4d797;text-underline-offset:2px}
 .dispatch-seats{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}
 .suit-chip{display:inline-flex;align-items:center;gap:4px;border:1px solid #6f8c7c;border-radius:999px;padding:3px 9px;font-size:.78rem;color:#f3e6c4;background:#17352c}
+.suit-chip.fallen-kingdom{opacity:.42;filter:grayscale(1);text-decoration:line-through;text-decoration-color:#c2906b;text-decoration-thickness:1px}
 .invite-seat{padding:12px 0;border-top:1px solid #557164}
 .invite-seat h3{font-size:1.2rem;margin:0}
 .invite-seat .actions{margin-top:8px}
