@@ -56,7 +56,7 @@ try { tutorialOpen=localStorage.getItem('regicidious.tutorial.open')==='1';tutor
 const milliseconds=n=>`${n.toFixed(2)} ms`;
 const timingLine=()=>timings.render===null?'':`Last move: logic ${milliseconds(timings.logic)} · save ${milliseconds(timings.save)} · render ${milliseconds(timings.render)}`;
 const creditLine='Original game by Shane Holmgren<br>Digital adaptation by Jamon Holmgren, <a href="https://jammin.games/" target="_blank" rel="noopener noreferrer">Jammin Games</a>';
-const BUILD=50;
+const BUILD=51;
 const buildLine=BUILD>0?`Build ${BUILD}`:'Build local';
 
 try {
@@ -1978,7 +1978,6 @@ app.addEventListener('click', event => {
     }
     return;
   }
-  if(storageError) return;
   if (action==='count') { draft.count=Number(button.dataset.value); render(); return; }
   if (action==='difficulty') { if(['serf','squire','knight'].includes(button.dataset.value))draft.difficulty=button.dataset.value; render(); return; }
   if (action==='mode') { draft.mode=button.dataset.value; render(); return; }

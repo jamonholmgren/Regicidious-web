@@ -138,7 +138,7 @@ const StateCodec = (() => {
     const binary=String.fromCharCode(...out);
     return 'B1.'+btoa(binary).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
   }
-  function decode(encoded) {
+  function decode(encoded, legacyHistory=false) {
     if(typeof encoded!=='string'||!encoded.startsWith('B1.'))throw Error('Unknown match format');
     if(encoded.length>98304)throw Error('Match link too large');
     const value=encoded.slice(3).replace(/-/g,'+').replace(/_/g,'/');
@@ -148,6 +148,7 @@ const StateCodec = (() => {
     for(let i=0;i<data.length-4;i++)check=Math.imul(check^data[i],16777619)>>>0;
     const expected=(data[data.length-4]|data[data.length-3]<<8|data[data.length-2]<<16|data[data.length-1]<<24)>>>0;
     if(check!==expected)throw Error('Match checksum mismatch');
+    try {
     let at=0;
     const byte=()=>{if(at>=data.length-4)throw Error('Truncated match');return data[at++];};
     const number=()=>{let n=0,shift=0,v;do{v=byte();n|=(v&127)<<shift;shift+=7;if(shift>35)throw Error('Invalid number');}while(v&128);return n>>>0;};
@@ -225,7 +226,7 @@ const StateCodec = (() => {
       if(mag!==0xa8)throw Error('Unknown match extension');
       const originTurn=byte(),originSetup=byte(),originPhase=phases[byte()],originView=byte(),originRound=number();
       if(!originPhase)throw Error('Invalid history origin');
-      const originAttacks=byte(),originKills=byte(),originTurnNumber=number(),originFirst=byte();
+      const originAttacks=byte(),originKills=byte(),originTurnNumber=number(),originFirst=legacyHistory?0:byte();
       const originPlayers=Array.from({length:count},(_,i)=>{
         const flags=byte(),coins=number();
         const board=ranksPacked(boardCount,i),front=board.slice(0,lineLen),back=board.slice(lineLen);
@@ -273,7 +274,7 @@ const StateCodec = (() => {
         } else if(type===11){
           const snapTurn=byte(),snapSetup=byte(),snapPhase=phases[byte()],snapView=byte(),snapRound=number();
           if(!snapPhase)throw Error('Invalid history');
-          const snapAttacks=byte(),snapKills=byte(),snapTurnNumber=number(),snapFirst=byte();
+          const snapAttacks=byte(),snapKills=byte(),snapTurnNumber=number(),snapFirst=legacyHistory?0:byte();
           const snapPlayers=Array.from({length:count},(_,i)=>{
             const flags=byte(),coins=number();
             const board=ranksPacked(boardCount,i),front=board.slice(0,lineLen),back=board.slice(lineLen);
@@ -291,6 +292,12 @@ const StateCodec = (() => {
     return {version:1,layout,queenRule,mode,players,turn,round,phase,setup,view:viewCode===255?null:viewCode,
       selection:selectionCode===255?null:{location:['front','back','reserve'][selectionCode],index:selectionIndex},
       actions,usedAttacker,scout,memory,kills,pending,refill,refillIndex,refillUndo,matchId,turnNumber,first,currentBattles,lastBattles,message,log,history,startedAt,restoreNotices,finishedAt,scoreVersion};
+    } catch(error) {
+      // Build 50 added opening-seat bytes to replay snapshots without changing the
+      // outer B1 marker. Try the prior snapshot shape before rejecting that save.
+      if(!legacyHistory)return decode(encoded,true);
+      throw error;
+    }
   }
   return {encode,decode,emojis};
 })();
