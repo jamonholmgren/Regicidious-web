@@ -1,6 +1,6 @@
 /* Compact, game-independent personal score records. No card state is included. */
 const ScoreCodec=(()=>{
-  const factors={serf:100,squire:125,knight:150};
+  const factors={serf:100,squire:115,knight:170,captain:130,warlord:150};
   const layouts=['classic','expanded'];
   const difficulties=Object.keys(factors);
   const textEncoder=new TextEncoder();

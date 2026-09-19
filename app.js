@@ -17,7 +17,7 @@ const NAMES = ['Spades', 'Hearts', 'Clubs', 'Diamonds'];
 const BANNER_NAMES = ['Aldric','Ansel','Baldwin','Cedric','Edric','Godric','Hawthorne','Leofric','Merrick','Osric','Percival','Rowan','Theobald','Ulric'];
 const RANKS = ['A','2','3','4','5','6','7','8','9','10','J','Q','K'];
 const EMOJIS = StateCodec.emojis;
-const PERSONA_NAMES={serf:'Serf',squire:'Squire',knight:'Knight'};
+const PERSONA_NAMES={serf:'Serf',squire:'Squire',captain:'Captain',warlord:'Warlord',knight:'Knight'};
 const app = document.querySelector('#app');
 let game = null;
 let slotId=null,hubOpen=false;
@@ -65,7 +65,7 @@ try { tutorialOpen=localStorage.getItem('regicidious.tutorial.open')==='1';tutor
 const milliseconds=n=>`${n.toFixed(2)} ms`;
 const timingLine=()=>timings.render===null?'':`Last move: logic ${milliseconds(timings.logic)} · save ${milliseconds(timings.save)} · render ${milliseconds(timings.render)}`;
 const creditLine='Original game by Shane Holmgren<br>Digital adaptation by Jamon Holmgren, <a href="https://jammin.games/" target="_blank" rel="noopener noreferrer">Jammin Games</a>';
-const BUILD=55;
+const BUILD=56;
 const buildLine=BUILD>0?`Build ${BUILD}`:'Build local';
 
 try {
@@ -228,7 +228,7 @@ function validateState(saved) {
     p.persona??=p.cpu?'squire':null;
     p.emoji??=EMOJIS[i];
     if(!EMOJIS.includes(p.emoji))bad();
-    if(p.persona!=null&&!['serf','squire','knight'].includes(p.persona))bad();
+    if(p.persona!=null&&!['serf','squire','captain','warlord','knight'].includes(p.persona))bad();
     if(p?.suit!==i||typeof p.name!=='string'||p.name.length>128||typeof p.alive!=='boolean'||typeof p.cpu!=='boolean'||!Number.isInteger(p.coins)||p.coins<0||p.coins>10000)bad();
     if(!Array.isArray(p.front)||p.front.length!==cols||!Array.isArray(p.back)||p.back.length!==cols||!Array.isArray(p.reserve)||!Array.isArray(p.deck))bad();
     p.graveyard??=[];p.hades??=[];
@@ -644,7 +644,7 @@ function renderScores() {
     const saved=slots.get(e.id),replay=saved&&canReplay(saved.game);
     return `<section class="panel score-row"><div class="score-top"><strong>#${i+1} · ${e.score.toLocaleString()} points</strong><span>${scoreDate(e.date)}</span></div><p>${e.emoji} ${escapeHTML(e.name)} · ${PERSONA_NAMES[e.difficulty]} · ${e.turns} ${e.turns===1?'turn':'turns'}</p><p class="muted small">Match ${e.id.slice(0,8)}</p><div class="actions">${replay?`<button class="button secondary" data-action="replay-game" data-id="${saved.id}">Replay</button>`:`<span class="muted small">Replay unavailable${saved?'':' · restore the game backup'}</span>`}${saved?`<button class="button ghost" data-action="backup-slot" data-id="${saved.id}">Make game backup</button>`:''}</div>${saved&&backupForSlot===saved.id&&backupText?`<textarea readonly rows="3">${escapeHTML(backupText)}</textarea><button class="button secondary" data-action="copy-backup">Copy game link</button>`:''}</section>`;
   }).join('');
-  frame(`<section class="score-heading"><div class="phase">Personal records · solo 1v1</div><h1>High scores</h1><p>Victory earns 1,000 points, plus up to 1,000 for speed. Each extra commander turn costs 50 speed points. Serf ×1, Squire ×1.25, Knight ×1.5.</p></section>${scoreImportNotice?`<p class="status">${escapeHTML(scoreImportNotice)}</p>`:''}<div class="score-tabs"><button class="button ${scoreLayout==='expanded'?'':'secondary'}" data-action="score-layout" data-value="expanded">Expanded</button><button class="button ${scoreLayout==='classic'?'':'secondary'}" data-action="score-layout" data-value="classic">Classic</button></div>${ratingError?`<p class="status">${escapeHTML(ratingError)}</p>`:''}${elo}${leaderboardPanel()}${rows||'<p class="muted">No solo 1v1 victories on this board yet.</p>'}<section class="panel"><h2>Keep your records</h2><p class="muted small">This link carries your scores and ratings, not the games themselves. Back up games separately if you want to replay them.</p>${scoreLinkError?`<p class="status">${escapeHTML(scoreLinkError)}</p>`:''}<div class="actions"><button class="button secondary" data-action="copy-scores" ${scoreLink?'':'disabled'}>Copy table link</button><button class="button secondary" data-action="share-scores" ${scoreLink?'':'disabled'}>Send table link</button></div><details><summary>Show score table link</summary><textarea readonly rows="3">${escapeHTML(scoreLink||'Preparing link…')}</textarea></details></section>${pastePanel()}`);
+  frame(`<section class="score-heading"><div class="phase">Personal records · solo 1v1</div><h1>High scores</h1><p>Victory earns 1,000 points, plus up to 1,000 for speed. Each extra commander turn costs 50 speed points. Higher courts earn a larger multiplier.</p></section>${scoreImportNotice?`<p class="status">${escapeHTML(scoreImportNotice)}</p>`:''}<div class="score-tabs"><button class="button ${scoreLayout==='expanded'?'':'secondary'}" data-action="score-layout" data-value="expanded">Expanded</button><button class="button ${scoreLayout==='classic'?'':'secondary'}" data-action="score-layout" data-value="classic">Classic</button></div>${ratingError?`<p class="status">${escapeHTML(ratingError)}</p>`:''}${elo}${leaderboardPanel()}${rows||'<p class="muted">No solo 1v1 victories on this board yet.</p>'}<section class="panel"><h2>Keep your records</h2><p class="muted small">This link carries your scores and ratings, not the games themselves. Back up games separately if you want to replay them.</p>${scoreLinkError?`<p class="status">${escapeHTML(scoreLinkError)}</p>`:''}<div class="actions"><button class="button secondary" data-action="copy-scores" ${scoreLink?'':'disabled'}>Copy table link</button><button class="button secondary" data-action="share-scores" ${scoreLink?'':'disabled'}>Send table link</button></div><details><summary>Show score table link</summary><textarea readonly rows="3">${escapeHTML(scoreLink||'Preparing link…')}</textarea></details></section>${pastePanel()}`);
 }
 function setTutorialStep(step) {
   tutorialStep=step;tutorialDice=null;
@@ -750,7 +750,7 @@ function renderStart() {
 function renderSetup() {
   const modes=[['solo','Solo vs computer'],['local','Pass the phone'],['text','Text-message multiplayer']];
   const layouts=[['expanded','Expanded · 4 across, 7 cards'],['classic','Classic · 3 across, 6 cards']];
-  const difficulty=draft.mode==='solo'?`<div class="label">Enemy commander</div><div class="actions mode-actions">${[['serf','Serf · easy'],['squire','Squire · normal'],['knight','Knight · hard']].map(([id,title])=>`<button class="button ${draft.difficulty===id?'':'ghost'}" data-action="difficulty" data-value="${id}">${title}</button>`).join('')}</div><p class="small muted">Serf charges recklessly. Squire weighs the odds. Knight guards the crown and picks fights carefully.</p>`:'';
+  const difficulty=draft.mode==='solo'?`<div class="label">Enemy commander</div><div class="actions mode-actions">${[['serf','Serf · novice'],['squire','Squire · easy'],['captain','Captain · fair'],['warlord','Warlord · hard'],['knight','Knight · ruthless']].map(([id,title])=>`<button class="button ${draft.difficulty===id?'':'ghost'}" data-action="difficulty" data-value="${id}">${title}</button>`).join('')}</div><p class="small muted">Each court knows more of the battlefield than the last. The Knight commands the full playbook.</p>`:'';
   const identityInput=i=>`<div class="player-identity"><label class="field"><span>${i===0?'Your name · tap to change':`${NAMES[i]} · suggested name`}</span><input data-name="${i}" maxlength="24" value="${escapeHTML(draft.names[i])}" autocomplete="off"></label><label class="field emoji-field"><span>Emoji</span><select data-emoji="${i}" aria-label="${escapeHTML(draft.names[i])} emoji">${EMOJIS.map(emoji=>`<option value="${emoji}"${draft.emojis[i]===emoji?' selected':''}>${emoji}</option>`).join('')}</select></label></div>`;
   const otherInputs=draft.mode==='solo'?'':draft.names.slice(1,draft.count).map((_,i)=>identityInput(i+1)).join('');
   const textGuidance=draft.mode==='text'?`<p class="small muted">Each player receives a private invite next.${draft.count>2?' Then create a group chat for the campaign and share every turn there.':' Send each following dispatch directly to the other ruler.'} Links discourage casual peeking but are not cheat-proof.</p>`:'';
@@ -1473,14 +1473,17 @@ function resolveBattle() {
   if (game.actions>=actionLimit()) finishAttacks();
 }
 
-const PLAYBOOK_DEFAULTS={jackBack:true,knightBack:true,assassinBack:false,queenFlank:true,cheapAttackers:true,probe:true,shuffle:true,knightSnipe:true,killKnight:true,sticky:true,neverAdjust:false,jitter:.1};
 const HIRE_COST=2, RESURRECT_COST=3, COIN_CAP=3, ROUND_TWO_WARCHEST=2;
 const AI_TACTICS={
-  serf:{skill:.35,memory:1,reposition:2,shakeChance:.15},
-  squire:{skill:.75,memory:2,reposition:3,shakeChance:.1},
-  knight:{skill:1,memory:3,reposition:4,shakeChance:.05},
+  // Each court has a strict subset of the next court's playbook. This makes
+  // difficulty explainable: better rulers gain tools instead of secret odds.
+  serf:{skill:.24,memory:0,reposition:0,shakeChance:.20,jitter:.55},
+  squire:{skill:.48,memory:1,reposition:1,shakeChance:.16,jitter:.32,jackBack:true,cheapAttackers:true},
+  captain:{skill:.68,memory:1,reposition:2,shakeChance:.11,jitter:.20,jackBack:true,knightBack:true,queenFlank:true,cheapAttackers:true,probe:true},
+  warlord:{skill:.78,memory:1,reposition:2,shakeChance:.10,jitter:.16,jackBack:true,knightBack:true,queenFlank:true,cheapAttackers:true,probe:true,shuffle:true,knightSnipe:true},
+  knight:{skill:1,memory:3,reposition:4,shakeChance:.04,jitter:.06,jackBack:true,knightBack:true,assassinBack:true,queenFlank:true,cheapAttackers:true,probe:true,shuffle:true,knightSnipe:true,killKnight:true,sticky:true,neverAdjust:false},
 };
-function tacticsFor(p){return {...PLAYBOOK_DEFAULTS,...(AI_TACTICS[p.persona]||AI_TACTICS.squire)};}
+function tacticsFor(p){return AI_TACTICS[p.persona]||AI_TACTICS.squire;}
 const formationMemory=new WeakMap();
 let turnAdjusted=false,minePick=false;
 function hireDetails(p){
@@ -2006,7 +2009,7 @@ app.addEventListener('click', event => {
     return;
   }
   if (action==='count') { draft.count=Number(button.dataset.value); render(); return; }
-  if (action==='difficulty') { if(['serf','squire','knight'].includes(button.dataset.value))draft.difficulty=button.dataset.value; render(); return; }
+  if (action==='difficulty') { if(['serf','squire','captain','warlord','knight'].includes(button.dataset.value))draft.difficulty=button.dataset.value; render(); return; }
   if (action==='mode') { draft.mode=button.dataset.value; render(); return; }
   if (action==='layout') { rememberLayout(button.dataset.value); render(); return; }
   if (action==='start') { rememberPlayerName(draft.names[0]);rememberPlayerEmoji(draft.emojis[0]);clearLinkError(); return commit(newGame); }
@@ -2130,7 +2133,7 @@ async function openIncomingHash(hash){
     if(request!==incomingRequest)return;
     if(kind==='scores'){
       const parts=decoded.split(';');
-      if(parts.length>2||!parts[0]?.startsWith('S1.')||parts.length===2&&!parts[1]?.startsWith('R1.'))throw Error('Invalid records backup');
+      if(parts.length>2||!parts[0]?.startsWith('S1.')||parts.length===2&&!/^R[12]\./.test(parts[1]))throw Error('Invalid records backup');
       incomingScores=ScoreCodec.decode(parts[0]);incomingRatings=parts.length===2?RatingCodec.decode(parts[1]):null;
       linkLoading=false;render();return;
     }

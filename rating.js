@@ -1,6 +1,6 @@
 /* Personal, zero-sum Elo ledger. One compact result per finished solo match. */
 const RatingCodec=(()=>{
-  const layouts=['classic','expanded'],opponents=['serf','squire','knight','human'];
+  const layouts=['classic','expanded'],opponents=['serf','squire','knight','captain','warlord','human'],legacyOpponents=['serf','squire','knight','human'];
   const LIMIT=10000,K=32;
   function fromGame(g,seat=0){
     if(g?.phase!=='victory'||g.players?.length!==2||!layouts.includes(g.layout)||
@@ -26,8 +26,8 @@ const RatingCodec=(()=>{
     return {events:[...byId.values()].sort((a,b)=>a.date-b.date||a.id.localeCompare(b.id)),conflicts};
   }
   function standings(events){
-    const ratings={computer:1000,human:1000,serf:800,squire:1000,knight:1200,humanPool:1000};
-    const records={computer:{wins:0,losses:0},human:{wins:0,losses:0},serf:{wins:0,losses:0},squire:{wins:0,losses:0},knight:{wins:0,losses:0}};
+    const ratings={computer:1000,human:1000,serf:750,squire:900,captain:1000,warlord:1100,knight:1200,humanPool:1000};
+    const records={computer:{wins:0,losses:0},human:{wins:0,losses:0},serf:{wins:0,losses:0},squire:{wins:0,losses:0},captain:{wins:0,losses:0},warlord:{wins:0,losses:0},knight:{wins:0,losses:0}};
     const changes={};
     for(const e of merge([],events).events){
       const ladder=e.opponent==='human'?'human':'computer',opponent=e.opponent==='human'?'humanPool':e.opponent;
@@ -43,21 +43,21 @@ const RatingCodec=(()=>{
     return {ratings,records,changes};
   }
   function encode(events){
-    const list=merge([],events).events,out=[0x52,0x47,1];
+    const list=merge([],events).events,out=[0x52,0x47,2];
     const byte=n=>out.push(n&255);
     const number=n=>{n>>>=0;while(n>=128){byte((n&127)|128);n>>>=7;}byte(n);};
     number(list.length);
     for(const e of list){
       for(let i=0;i<32;i+=2)byte(parseInt(e.id.slice(i,i+2),16));
-      byte(layouts.indexOf(e.layout)|(opponents.indexOf(e.opponent)<<1)|(e.won?8:0));number(e.date);
+      byte(layouts.indexOf(e.layout)|(opponents.indexOf(e.opponent)<<1)|(e.won?16:0));number(e.date);
     }
     let check=2166136261;for(const n of out)check=Math.imul(check^n,16777619)>>>0;
     for(let i=0;i<4;i++)byte(check>>>(8*i));
     const chunks=[];for(let i=0;i<out.length;i+=8192)chunks.push(String.fromCharCode(...out.slice(i,i+8192)));
-    return 'R1.'+btoa(chunks.join('')).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+    return 'R2.'+btoa(chunks.join('')).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
   }
   function decode(token){
-    if(typeof token!=='string'||!/^R1\.[A-Za-z0-9_-]+$/.test(token)||token.length>400000)throw Error('Invalid rating data');
+    if(typeof token!=='string'||!/^R[12]\.[A-Za-z0-9_-]+$/.test(token)||token.length>400000)throw Error('Invalid rating data');
     const data=Uint8Array.from(atob(token.slice(3).replace(/-/g,'+').replace(/_/g,'/')),ch=>ch.charCodeAt(0));
     if(data.length<8||data.length>300000)throw Error('Invalid rating data');
     let check=2166136261;for(let i=0;i<data.length-4;i++)check=Math.imul(check^data[i],16777619)>>>0;
@@ -65,13 +65,15 @@ const RatingCodec=(()=>{
     if(check!==expected)throw Error('Rating checksum mismatch');
     let at=0;const byte=()=>{if(at>=data.length-4)throw Error('Truncated rating data');return data[at++];};
     const number=()=>{let n=0,shift=0,part;do{part=byte();n|=(part&127)<<shift;shift+=7;if(shift>35)throw Error('Invalid rating number');}while(part&128);return n>>>0;};
-    if(byte()!==0x52||byte()!==0x47||byte()!==1)throw Error('Unknown rating version');
+    if(byte()!==0x52||byte()!==0x47)throw Error('Unknown rating version');
+    const version=byte();if(version!==1&&version!==2)throw Error('Unknown rating version');
     const count=number();if(count>LIMIT)throw Error('Too many rating results');
     const events=[];
     for(let i=0;i<count;i++){
       let id='';for(let j=0;j<16;j++)id+=byte().toString(16).padStart(2,'0');
-      const flags=byte(),date=number();if(flags>15||((flags>>1)&3)>3)throw Error('Invalid rating flags');
-      const event={id,layout:layouts[flags&1],opponent:opponents[(flags>>1)&3],won:!!(flags&8),date};
+      const flags=byte(),date=number(),pool=version===1?legacyOpponents:opponents,limit=version===1?15:31,index=version===1?(flags>>1)&3:(flags>>1)&7;
+      if(flags>limit||index>=pool.length)throw Error('Invalid rating flags');
+      const event={id,layout:layouts[flags&1],opponent:pool[index],won:!!(flags&(version===1?8:16)),date};
       if(!valid(event))throw Error('Invalid rating result');events.push(event);
     }
     if(at!==data.length-4)throw Error('Unexpected rating data');

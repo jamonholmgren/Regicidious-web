@@ -3,7 +3,8 @@ const StateCodec = (() => {
   const phases=['setup','buy','arrange','attack','battle','queen','refill','income','victory','stalemate','invite'];
   const emojis=['👑','🐉','🦊','🦁','🐺','🛡️','🦅','🐻','🦄','💀','⚔️','🧙'];
   const ranks=['A','2','3','4','5','6','7','8','9','10','J','Q','K'];
-  const personas=[null,'serf','squire','knight'];
+  // Keep the original three codes stable so existing matches retain their court.
+  const personas=[null,'serf','squire','knight','captain','warlord'];
   const playerFlags=p=>(p.alive?1:0)|(p.cpu?2:0)|(Math.max(0,personas.indexOf(p.persona))<<2);
   const encoder=new TextEncoder(), decoder=new TextDecoder('utf-8',{fatal:true});
   const cardCode=id => id==null?255:Number(id.split('-')[0])*16+ranks.indexOf(id.split('-')[1]);
