@@ -97,6 +97,7 @@ const StateCodec = (() => {
         else if(t==='income')byte(9);
         else if(t==='mine'){byte(12);card(e.card);}
         else if(t==='adjust')byte(13);
+        else if(t==='hire'){byte(14);card(e.card);byte(e.cost);byte(e.from==='graveyard'?1:0);}
         else if(t==='arrangeSet'){
           byte(10);byte(e.owner);
           ranksPacked([...e.front,...e.back]);
@@ -134,6 +135,13 @@ const StateCodec = (() => {
     if(state.players.some(p=>Number.isFinite(p.humanElo)||Number.isFinite(p.computerElo))){
       byte(0xb3);for(const p of state.players){number(Math.max(0,Math.round(p.humanElo??1000)));number(Math.max(0,Math.round(p.computerElo??1000)));}
     }
+    byte(0xb4);
+    for(const p of state.players){
+      const grave=p.graveyard||[],hades=p.hades||[];
+      byte(grave.length);for(const id of grave)card(id);
+      byte(hades.length);for(const id of hades)card(id);
+    }
+    if(state.usedAttackers?.length){byte(0xb5);byte(state.usedAttackers.length);for(const id of state.usedAttackers)card(id);}
     // Detect accidental truncation/corruption. This is not a security signature.
     let check=2166136261;
     for(const n of out)check=Math.imul(check^n,16777619)>>>0;
@@ -193,14 +201,14 @@ const StateCodec = (() => {
       const undoCount=byte();if(undoCount>3)throw Error('Invalid refill history');
       for(let i=0;i<undoCount;i++)refillUndo.push({owner:byte(),from:byte(),to:byte(),card:card()});
     }
-    let matchId='',turnNumber=1,currentBattles=[],lastBattles=[],history=null,startedAt=0,usedAttacker=null,scout=null,restoreNotices=[],finishedAt=0,scoreVersion=0,memory=[],first=0;
+    let matchId='',turnNumber=1,currentBattles=[],lastBattles=[],history=null,startedAt=0,usedAttacker=null,usedAttackers=[],scout=null,restoreNotices=[],finishedAt=0,scoreVersion=0,memory=[],first=0;
     if(at<data.length-4){
       if(byte()!==0xa7)throw Error('Unknown match extension');
       const idLength=byte();if(idLength!==0&&idLength!==16)throw Error('Invalid match ID');
       for(let i=0;i<idLength;i++)matchId+=byte().toString(16).padStart(2,'0');
       turnNumber=number();
       const events=()=>{
-        const n=byte();if(n>2)throw Error('Invalid battle history');
+        const n=byte();if(n>3)throw Error('Invalid battle history');
         return Array.from({length:n},()=>{
           const actor=byte(),defender=byte(),sourceCode=byte(),targetCode=byte();
           const source={row:sourceCode&128?'back':'front',index:sourceCode&127};
@@ -227,6 +235,8 @@ const StateCodec = (() => {
       if(mag===0xb1){for(const p of players)p.miner=card();continue;}
       if(mag===0xb2){first=byte();continue;}
       if(mag===0xb3){for(const p of players){p.humanElo=number();p.computerElo=number();}continue;}
+      if(mag===0xb4){for(const p of players){const graves=byte();if(graves>13)throw Error('Invalid graveyard');p.graveyard=Array.from({length:graves},card);const hades=byte();if(hades>13)throw Error('Invalid hades');p.hades=Array.from({length:hades},card);}continue;}
+      if(mag===0xb5){const n=byte();if(n>3)throw Error('Invalid used attackers');usedAttackers=Array.from({length:n},card);continue;}
       if(mag!==0xa8)throw Error('Unknown match extension');
       const originTurn=byte(),originSetup=byte(),originPhase=phases[byte()],originView=byte(),originRound=number();
       if(!originPhase)throw Error('Invalid history origin');
@@ -272,6 +282,7 @@ const StateCodec = (() => {
         else if(type===9) historyEvents.push({t:'income'});
         else if(type===12) historyEvents.push({t:'mine',card:card()});
         else if(type===13) historyEvents.push({t:'adjust'});
+        else if(type===14) historyEvents.push({t:'hire',card:card(),cost:byte(),from:byte()?'graveyard':'deck'});
         else if(type===10){
           const owner=byte(),board=ranksPacked(boardCount,owner),reserve=ranksPacked(byte(),owner);
           historyEvents.push({t:'arrangeSet',owner,front:board.slice(0,lineLen),back:board.slice(lineLen),reserve});
@@ -292,10 +303,10 @@ const StateCodec = (() => {
       if(truncated)history.truncated=true;
     }
     if(at!==data.length-4)throw Error('Unexpected match data');
-    players.forEach((p,i)=>{p.emoji??=emojis[i%emojis.length];});
+    players.forEach((p,i)=>{p.emoji??=emojis[i%emojis.length];p.graveyard??=[];p.hades??=[];});
     return {version:1,layout,queenRule,mode,players,turn,round,phase,setup,view:viewCode===255?null:viewCode,
       selection:selectionCode===255?null:{location:['front','back','reserve'][selectionCode],index:selectionIndex},
-      actions,usedAttacker,scout,memory,kills,pending,refill,refillIndex,refillUndo,matchId,turnNumber,first,currentBattles,lastBattles,message,log,history,startedAt,restoreNotices,finishedAt,scoreVersion};
+      actions,usedAttacker,usedAttackers,scout,memory,kills,pending,refill,refillIndex,refillUndo,matchId,turnNumber,first,currentBattles,lastBattles,message,log,history,startedAt,restoreNotices,finishedAt,scoreVersion};
     } catch(error) {
       // Build 50 added opening-seat bytes to replay snapshots without changing the
       // outer B1 marker. Try the prior snapshot shape before rejecting that save.
