@@ -1,6 +1,6 @@
 /* Personal, zero-sum Elo ledger. One compact result per finished solo match. */
 const RatingCodec=(()=>{
-  const layouts=['classic','expanded'],opponents=['serf','captain','warlord'];
+  const layouts=['classic','expanded'],opponents=['serf','squire','knight'];
   const LIMIT=10000,K=32;
   function fromGame(g){
     if(g?.scoreVersion!==1||g.mode!=='solo'||g.phase!=='victory'||g.players?.length!==2||
@@ -21,13 +21,11 @@ const RatingCodec=(()=>{
     if(byId.size>LIMIT)throw Error('Too many rating results');
     return {events:[...byId.values()].sort((a,b)=>a.date-b.date||a.id.localeCompare(b.id)),conflicts};
   }
-  function standings(events,layout){
-    if(!layouts.includes(layout))throw Error('Invalid rating layout');
-    const ratings={human:1000,serf:1000,captain:1000,warlord:1000};
-    const records={human:{wins:0,losses:0},serf:{wins:0,losses:0},captain:{wins:0,losses:0},warlord:{wins:0,losses:0}};
+  function standings(events){
+    const ratings={human:1000,serf:800,squire:1000,knight:1200};
+    const records={human:{wins:0,losses:0},serf:{wins:0,losses:0},squire:{wins:0,losses:0},knight:{wins:0,losses:0}};
     const changes={};
     for(const e of merge([],events).events){
-      if(e.layout!==layout)continue;
       const before=ratings.human,bot=ratings[e.opponent];
       const expected=1/(1+10**((bot-before)/400));
       const raw=K*((e.won?1:0)-expected);

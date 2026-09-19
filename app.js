@@ -14,11 +14,12 @@ const SUITS = ['♠', '♥', '♣', '♦'];
 const NAMES = ['Spades', 'Hearts', 'Clubs', 'Diamonds'];
 const RANKS = ['A','2','3','4','5','6','7','8','9','10','J','Q','K'];
 const EMOJIS = StateCodec.emojis;
+const PERSONA_NAMES={serf:'Serf',squire:'Squire',knight:'Knight'};
 const app = document.querySelector('#app');
 let game = null;
 let slotId=null,hubOpen=false;
 let storageError = '';
-let draft = { mode:'solo',count:2, layout:'expanded',difficulty:'captain', names: ['You','Crimson Court','Iron Court','Ember Court'],emojis:EMOJIS.slice(0,4) };
+let draft = { mode:'solo',count:2, layout:'expanded',difficulty:'squire', names: ['You','Crimson Court','Iron Court','Ember Court'],emojis:EMOJIS.slice(0,4) };
 try {
   const rememberedName=localStorage.getItem(PLAYER_NAME_KEY);
   if(rememberedName!=null&&rememberedName.trim())draft.names[0]=rememberedName.slice(0,24);
@@ -195,10 +196,10 @@ function validateState(saved) {
     }
   }
   saved.players.forEach((p,i)=>{
-    p.persona??=p.cpu?'captain':null;
+    p.persona??=p.cpu?'squire':null;
     p.emoji??=EMOJIS[i];
     if(!EMOJIS.includes(p.emoji))bad();
-    if(p.persona!=null&&!['serf','captain','warlord'].includes(p.persona))bad();
+    if(p.persona!=null&&!['serf','squire','knight'].includes(p.persona))bad();
     if(p?.suit!==i||typeof p.name!=='string'||p.name.length>128||typeof p.alive!=='boolean'||typeof p.cpu!=='boolean'||!Number.isInteger(p.coins)||p.coins<0||p.coins>10000)bad();
     if(!Array.isArray(p.front)||p.front.length!==cols||!Array.isArray(p.back)||p.back.length!==cols||!Array.isArray(p.reserve)||!Array.isArray(p.deck))bad();
     const cards=[...p.front,...p.back,...p.reserve,...p.deck].filter(id=>id!=null);
@@ -363,8 +364,8 @@ function reconcileRatings(){
   if(merged.events.length!==prior.length)localStorage.setItem(RATING_KEY,RatingCodec.encode(merged.events));
   ratingReconciled=true;
 }
-function ratingStandings(layout){
-  try{reconcileRatings();return RatingCodec.standings(readRatingLedger(),layout);}
+function ratingStandings(){
+  try{reconcileRatings();return RatingCodec.standings(readRatingLedger());}
   catch(error){ratingError='Could not read your saved ratings. Your games and score table were kept.';console.error(error);return null;}
 }
 function scoreDate(seconds) {
@@ -490,7 +491,9 @@ function cardHTML(id, action, location, index, opts={}) {
 function lineHTML(cards, action, location, hidden=false) { return `<div class="line">${cards.map((id,i) => cardHTML(id,action,location,i,{hidden})).join('')}</div>`; }
 function frame(content,compact=false) {
   const inMatch=!!game&&!hubOpen&&!incomingBackup&&!incomingScores&&!tutorialOpen&&!scoresOpen;
-  const topAction=inMatch?matchReplay||computerPlayback?'':`<button class="pill" data-action="toggle-sheet" aria-label="Game details">☰</button>`:hubOpen?'':`<button class="pill" data-action="games">Games</button>`;
+  const ladder=!inMatch&&!hubOpen?ratingStandings():null;
+  const eloPill=ladder?`<button class="pill" data-action="scores-open" title="Solo Elo and records">Elo: ${Math.round(ladder.ratings.human).toLocaleString()}</button>`:'';
+  const topAction=inMatch?matchReplay||computerPlayback?'':`<button class="pill" data-action="toggle-sheet" aria-label="Game details">☰</button>`:hubOpen?'':`${eloPill}<button class="pill" data-action="games">Games</button>`;
   const credit=`<p class="notice">${creditLine}<br><span class="perf">${timingLine()}</span></p>`;
   app.innerHTML = `<main class="app ${compact?'compact-app':''}"><header class="top ${compact?'compact-top':''}"><button type="button" class="brand" data-action="reload" aria-label="Reload Regicidious" title="Reload page">♛ Regicidious</button><div class="top-actions">${topAction}</div></header>${storageError?`<div class="status" role="alert">${storageError}</div>`:''}${backupError?`<div class="status" role="alert">${backupError}</div>`:''}${content}${!compact&&!game&&!hubOpen&&!incomingBackup&&!incomingScores&&!scoresOpen&&!tutorialOpen?pastePanel():''}${!compact&&inMatch?arenaDetails():''}${compact?'':credit}</main>`;
 }
@@ -528,15 +531,15 @@ function renderHub() {
 function renderScores() {
   let entries=[];
   try { entries=readScoreTable(); } catch(error){scoreLinkError='This score table could not be read. Its saved data was kept.';console.error(error);}
-  const ladder=ratingStandings(scoreLayout);
-  const elo=ladder?`<section class="panel rating-panel"><div class="phase">Personal Elo · ${scoreLayout}</div><h2>You · ${Math.round(ladder.ratings.human).toLocaleString()}</h2><p class="muted small">${ladder.records.human.wins} wins · ${ladder.records.human.losses} losses</p><div class="rating-opponents">${[['serf','Serf'],['captain','Captain'],['warlord','Warlord']].map(([id,name])=>`<div><strong>${name}</strong><span>${Math.round(ladder.ratings[id]).toLocaleString()} · ${ladder.records[id].wins}W ${ladder.records[id].losses}L</span></div>`).join('')}</div><p class="muted small">Each finished 1v1 transfers Elo between you and that opponent. The pool starts at 4,000 total; beating one bot repeatedly yields less each time.</p></section>`:'';
+  const ladder=ratingStandings();
+  const elo=ladder?`<section class="panel rating-panel"><div class="phase">Personal Elo · vs computer</div><h2>You · ${Math.round(ladder.ratings.human).toLocaleString()}</h2><p class="muted small">${ladder.records.human.wins} wins · ${ladder.records.human.losses} losses</p><div class="rating-opponents">${Object.entries(PERSONA_NAMES).map(([id,name])=>`<div><strong>${name}</strong><span>${Math.round(ladder.ratings[id]).toLocaleString()} · ${ladder.records[id].wins}W ${ladder.records[id].losses}L</span></div>`).join('')}</div><p class="muted small">Each finished 1v1 transfers Elo between you and that opponent across both boards. The pool starts at 4,000 total; beating one bot repeatedly yields less each time.</p></section>`:'';
   ensureScoreLink();
   const slots=new Map(gameSlots().filter(s=>s.game.phase==='victory').map(s=>[s.game.matchId,s]));
   const rows=entries.filter(e=>e.layout===scoreLayout).map((e,i)=>{
     const saved=slots.get(e.id),replay=saved&&canReplay(saved.game);
-    return `<section class="panel score-row"><div class="score-top"><strong>#${i+1} · ${e.score.toLocaleString()} points</strong><span>${scoreDate(e.date)}</span></div><p>${e.emoji} ${escapeHTML(e.name)} · ${e.difficulty==='serf'?'Serf':e.difficulty==='captain'?'Captain':'Warlord'} · ${e.turns} ${e.turns===1?'turn':'turns'}</p><p class="muted small">Match ${e.id.slice(0,8)}</p><div class="actions">${replay?`<button class="button secondary" data-action="replay-game" data-id="${saved.id}">Replay</button>`:`<span class="muted small">Replay unavailable${saved?'':' · restore the game backup'}</span>`}${saved?`<button class="button ghost" data-action="backup-slot" data-id="${saved.id}">Make game backup</button>`:''}</div>${saved&&backupForSlot===saved.id&&backupText?`<textarea readonly rows="3">${escapeHTML(backupText)}</textarea><button class="button secondary" data-action="copy-backup">Copy game link</button>`:''}</section>`;
+    return `<section class="panel score-row"><div class="score-top"><strong>#${i+1} · ${e.score.toLocaleString()} points</strong><span>${scoreDate(e.date)}</span></div><p>${e.emoji} ${escapeHTML(e.name)} · ${PERSONA_NAMES[e.difficulty]} · ${e.turns} ${e.turns===1?'turn':'turns'}</p><p class="muted small">Match ${e.id.slice(0,8)}</p><div class="actions">${replay?`<button class="button secondary" data-action="replay-game" data-id="${saved.id}">Replay</button>`:`<span class="muted small">Replay unavailable${saved?'':' · restore the game backup'}</span>`}${saved?`<button class="button ghost" data-action="backup-slot" data-id="${saved.id}">Make game backup</button>`:''}</div>${saved&&backupForSlot===saved.id&&backupText?`<textarea readonly rows="3">${escapeHTML(backupText)}</textarea><button class="button secondary" data-action="copy-backup">Copy game link</button>`:''}</section>`;
   }).join('');
-  frame(`<section class="score-heading"><div class="phase">Personal records · solo 1v1</div><h1>High scores</h1><p>Victory earns 1,000 points, plus up to 1,000 for speed. Each extra commander turn costs 50 speed points. Serf ×1, Captain ×1.25, Warlord ×1.5.</p></section>${scoreImportNotice?`<p class="status">${escapeHTML(scoreImportNotice)}</p>`:''}<div class="score-tabs"><button class="button ${scoreLayout==='expanded'?'':'secondary'}" data-action="score-layout" data-value="expanded">Expanded</button><button class="button ${scoreLayout==='classic'?'':'secondary'}" data-action="score-layout" data-value="classic">Classic</button></div>${ratingError?`<p class="status">${escapeHTML(ratingError)}</p>`:''}${elo}${rows||'<p class="muted">No solo 1v1 victories on this board yet.</p>'}<section class="panel"><h2>Keep your records</h2><p class="muted small">This link holds scores, match IDs, and rating results—not the games or their cards. Back up games separately if you want to replay them.</p>${scoreLinkError?`<p class="status">${escapeHTML(scoreLinkError)}</p>`:''}<div class="actions"><button class="button secondary" data-action="copy-scores" ${scoreLink?'':'disabled'}>Copy table link</button><button class="button secondary" data-action="share-scores" ${scoreLink?'':'disabled'}>Send table link</button></div><details><summary>Show score table link</summary><textarea readonly rows="3">${escapeHTML(scoreLink||'Preparing link…')}</textarea></details></section>${pastePanel()}`);
+  frame(`<section class="score-heading"><div class="phase">Personal records · solo 1v1</div><h1>High scores</h1><p>Victory earns 1,000 points, plus up to 1,000 for speed. Each extra commander turn costs 50 speed points. Serf ×1, Squire ×1.25, Knight ×1.5.</p></section>${scoreImportNotice?`<p class="status">${escapeHTML(scoreImportNotice)}</p>`:''}<div class="score-tabs"><button class="button ${scoreLayout==='expanded'?'':'secondary'}" data-action="score-layout" data-value="expanded">Expanded</button><button class="button ${scoreLayout==='classic'?'':'secondary'}" data-action="score-layout" data-value="classic">Classic</button></div>${ratingError?`<p class="status">${escapeHTML(ratingError)}</p>`:''}${elo}${rows||'<p class="muted">No solo 1v1 victories on this board yet.</p>'}<section class="panel"><h2>Keep your records</h2><p class="muted small">This link holds scores, match IDs, and rating results—not the games or their cards. Back up games separately if you want to replay them.</p>${scoreLinkError?`<p class="status">${escapeHTML(scoreLinkError)}</p>`:''}<div class="actions"><button class="button secondary" data-action="copy-scores" ${scoreLink?'':'disabled'}>Copy table link</button><button class="button secondary" data-action="share-scores" ${scoreLink?'':'disabled'}>Send table link</button></div><details><summary>Show score table link</summary><textarea readonly rows="3">${escapeHTML(scoreLink||'Preparing link…')}</textarea></details></section>${pastePanel()}`);
 }
 function setTutorialStep(step) {
   tutorialStep=step;tutorialDice=null;
@@ -640,12 +643,10 @@ function renderStart() {
 function renderSetup() {
   const modes=[['solo','Solo vs computer'],['local','Pass the phone'],['text','Text-message multiplayer']];
   const layouts=[['expanded','Expanded · 4 across, 7 cards'],['classic','Classic · 3 across, 6 cards']];
-  const royalRules=`<p class="small muted">The first commander gets one opening attack. Later turns allow two attacks with different cards. A neighboring peasant lends the Queen a die when she attacks and falls in her place if she loses. When the King defends, a neighboring peasant takes a winning hit for him. The weakest adjacent peasant falls first.</p>`;
-  const ladder=draft.mode==='solo'?ratingStandings(draft.layout):null;
-  const difficulty=draft.mode==='solo'?`<div class="label">Enemy commander</div><div class="actions mode-actions">${[['serf','Serf · easy'],['captain','Captain · normal'],['warlord','Warlord · hard']].map(([id,title])=>`<button class="button ${draft.difficulty===id?'':'ghost'}" data-action="difficulty" data-value="${id}">${title}${ladder?` · Elo ${Math.round(ladder.ratings[id])}`:''}</button>`).join('')}</div><p class="small muted">Serf charges recklessly. Captain weighs the odds. Warlord guards the crown and picks fights carefully.</p>`:'';
+  const difficulty=draft.mode==='solo'?`<div class="label">Enemy commander</div><div class="actions mode-actions">${[['serf','Serf · easy'],['squire','Squire · normal'],['knight','Knight · hard']].map(([id,title])=>`<button class="button ${draft.difficulty===id?'':'ghost'}" data-action="difficulty" data-value="${id}">${title}</button>`).join('')}</div><p class="small muted">Serf charges recklessly. Squire weighs the odds. Knight guards the crown and picks fights carefully.</p>`:'';
   const identityInput=i=>`<div class="player-identity"><label class="field"><span>${i===0?'Your name · tap to change':`${NAMES[i]} · suggested name`}</span><input data-name="${i}" maxlength="24" value="${escapeHTML(draft.names[i])}" autocomplete="off"></label><label class="field emoji-field"><span>Emoji</span><select data-emoji="${i}" aria-label="${escapeHTML(draft.names[i])} emoji">${EMOJIS.map(emoji=>`<option value="${emoji}"${draft.emojis[i]===emoji?' selected':''}>${emoji}</option>`).join('')}</select></label></div>`;
   const otherInputs=draft.mode==='solo'?'':draft.names.slice(1,draft.count).map((_,i)=>identityInput(i+1)).join('');
-  frame(`<div class="setup-heading"><button class="button ghost" data-action="setup-back">‹ Back</button><h1>New game</h1></div><section class="panel setup-panel"><p class="flavor">M’lord, our enemies are at the gates. We must prepare for war!</p><div class="label">Your banner</div>${identityInput(0)}<div class="label">Mode</div><div class="actions mode-actions">${modes.map(([mode,title])=>`<button class="button ${draft.mode===mode?'':'ghost'}" data-action="mode" data-value="${mode}">${title}</button>`).join('')}</div><div class="label">Battle lines</div><div class="actions mode-actions">${layouts.map(([layout,title])=>`<button class="button ${draft.layout===layout?'':'ghost'}" data-action="layout" data-value="${layout}">${title}</button>`).join('')}</div>${difficulty}${royalRules}<div class="label">${draft.mode==='solo'?'Computer opponents':'Players'}</div><div class="actions">${[2,3,4].map(n=>`<button class="button ${draft.count===n?'':'ghost'}" data-action="count" data-value="${n}">${draft.mode==='solo'?n-1:n}</button>`).join('')}</div>${otherInputs?`<div class="stack" style="margin-top:18px">${otherInputs}</div><p class="small muted">These are suggestions. Each player chooses their own name and emoji before setting up their lines.</p>`:''}${draft.mode==='text'?`<p class="small muted">Send each player their private invite on the next screen, then declare war. Links discourage casual peeking but are not cheat-proof.</p>`:''}<button class="button wide begin-game" data-action="start">${draft.mode==='text'?'Prepare invitations →':'Begin the war →'}</button></section>`);
+  frame(`<div class="setup-heading"><button class="button ghost" data-action="setup-back">‹ Back</button><h1>New game</h1></div><section class="panel setup-panel"><p class="flavor">M’lord, our enemies are at the gates. We must prepare for war!</p><div class="label">Your banner</div>${identityInput(0)}<div class="label">Mode</div><div class="actions mode-actions">${modes.map(([mode,title])=>`<button class="button ${draft.mode===mode?'':'ghost'}" data-action="mode" data-value="${mode}">${title}</button>`).join('')}</div><div class="label">Battle lines</div><div class="actions mode-actions">${layouts.map(([layout,title])=>`<button class="button ${draft.layout===layout?'':'ghost'}" data-action="layout" data-value="${layout}">${title}</button>`).join('')}</div>${difficulty}<div class="label">${draft.mode==='solo'?'Computer opponents':'Players'}</div><div class="actions">${[2,3,4].map(n=>`<button class="button ${draft.count===n?'':'ghost'}" data-action="count" data-value="${n}">${draft.mode==='solo'?n-1:n}</button>`).join('')}</div>${otherInputs?`<div class="stack" style="margin-top:18px">${otherInputs}</div><p class="small muted">These are suggestions. Each player chooses their own name and emoji before setting up their lines.</p>`:''}${draft.mode==='text'?`<p class="small muted">Send each player their private invite on the next screen, then declare war. Links discourage casual peeking but are not cheat-proof.</p>`:''}<button class="button wide begin-game" data-action="start">${draft.mode==='text'?'Prepare invitations →':'Begin the war →'}</button></section>`);
 }
 function renderFirstIdentity(){
   const p=player(game.setup);
@@ -1117,9 +1118,9 @@ function renderVictory() {
   const winner = player(living()[0]);
   if(game.mode==='text')ensureTurnLink();
   const score=ScoreCodec.entryFromGame(game);
-  const rated=RatingCodec.fromGame(game),ladder=rated?ratingStandings(game.layout):null,change=rated&&ladder?.changes[rated.id];
-  const ratingPanel=change?`<section class="panel"><h2>Your Elo · ${Math.round(change.after).toLocaleString()}</h2><p class="muted">${change.delta>=0?'+':''}${Math.round(change.delta)} against ${escapeHTML(player(1).name)}. ${game.layout==='classic'?'Classic':'Expanded'} ratings are separate.</p><button class="button secondary wide" data-action="scores-open">See ratings & high scores</button></section>`:'';
-  const scorePanel=score?`<section class="panel"><h2>${score.score.toLocaleString()} points</h2><p class="muted">${score.turns} commander ${score.turns===1?'turn':'turns'} against ${score.difficulty}. Your score is saved in the ${score.layout} table.</p><button class="button secondary wide" data-action="scores-open">See high scores</button></section>`:'';
+  const rated=RatingCodec.fromGame(game),ladder=rated?ratingStandings():null,change=rated&&ladder?.changes[rated.id];
+  const ratingPanel=change?`<section class="panel"><h2>Your Elo · ${Math.round(change.after).toLocaleString()}</h2><p class="muted">${change.delta>=0?'+':''}${Math.round(change.delta)} against ${escapeHTML(player(1).name)}. One rating covers both boards.</p><button class="button secondary wide" data-action="scores-open">See ratings & high scores</button></section>`:'';
+  const scorePanel=score?`<section class="panel"><h2>${score.score.toLocaleString()} points</h2><p class="muted">${score.turns} commander ${score.turns===1?'turn':'turns'} against ${PERSONA_NAMES[score.difficulty]}. Your score is saved in the ${score.layout} table.</p><button class="button secondary wide" data-action="scores-open">See high scores</button></section>`:'';
   frame(`<section class="hero"><div class="crown">♛</div><div class="phase">The kingdom stands</div><h1>${escapeHTML(winner.name)} wins.</h1><p>${SUITS[winner.suit]} ${NAMES[winner.suit]} is the last kingdom standing.</p></section>${ratingPanel}${scorePanel}${canReplayLast()||canReplay(game)?`<section class="panel"><h2>Watch it again</h2><p class="muted small">${canReplay(game)?'Replay every turn with all cards visible. The saved game is not changed.':'Watch the last fights again. Cards return to their hidden live faces afterward.'}</p>${replayLastButton()}${canReplay(game)?`<button class="button wide" data-action="replay-game">Replay game</button>`:''}</section>`:''}${game.mode==='text'?`<section class="panel"><h2>Tell the group</h2>${turnLink?`<div class="actions"><button class="button" data-action="copy-turn">Copy result</button><button class="button secondary" data-action="share-turn">Send result to group</button></div>`:'<p class="muted">Preparing result link…</p>'}</section>`:''}<section class="panel"><h2>Another game?</h2><p class="muted small">Starting another game leaves this one in your Games list.</p><button class="button secondary wide" data-action="new-after-win">New game</button></section>`);
 }
 function renderStalemate() {
@@ -1267,8 +1268,8 @@ function cardPriority(id) {
 }
 const AI_TACTICS={
   serf:{risk:0,jitter:16,guardedKing:[7,7]},
-  captain:{risk:1,jitter:.025,guardedKing:[7,7]},
-  warlord:{risk:1,jitter:.025,guardedKing:[3.8,2.2],queenTarget:4,knightTarget:2.5,jackTarget:2,assassinTarget:3,queenGuardAware:true},
+  squire:{risk:1,jitter:.025,guardedKing:[7,7]},
+  knight:{risk:1,jitter:.025,guardedKing:[3.8,2.2],queenTarget:4,knightTarget:2.5,jackTarget:2,assassinTarget:3,queenGuardAware:true},
 };
 function arrangeAI(p) {
   const frontLen=p.front?.length||3, backLen=p.back?.length||3;
@@ -1283,7 +1284,7 @@ function arrangeAI(p) {
     p.reserve=rear.slice(backLen);
     return;
   }
-  if(p.persona==='warlord' && king){
+  if(p.persona==='knight' && king){
     const field=cards.filter(id=>id!==king),queen=field.find(id=>rank(id)==='Q');
     const peasants=field.filter(isPeasant).sort((a,b)=>value(b)-value(a));
     const queenAlly=queen?peasants[0]:null;
@@ -1322,8 +1323,8 @@ function refillAI(p) {
 }
 function chooseAIAttack() {
   const self=player(game.turn);
-  const persona=self.persona||'captain';
-  const tactics=AI_TACTICS[persona]||AI_TACTICS.captain;
+  const persona=self.persona||'squire';
+  const tactics=AI_TACTICS[persona]||AI_TACTICS.squire;
   const targets=[];
   for(const enemy of living()) if(enemy!==game.turn) {
     for(const row of ['front','back']) for(let index=0;index<player(enemy)[row].length;index++) if(player(enemy)[row][index]) targets.push({enemy,row,index});
@@ -1334,7 +1335,7 @@ function chooseAIAttack() {
     for(const t of targets) {
       if(t.row==='back' && (rank(id)!=='10' || sourceRow==='back')) continue;
       // Evaluate a probability model for a face-down card, never its actual rank.
-      const seen=persona==='warlord'&&game.scout?.player===t.enemy&&game.scout.row===t.row&&game.scout.index===t.index?game.scout.id:null;
+      const seen=persona==='knight'&&game.scout?.player===t.enemy&&game.scout.row===t.row&&game.scout.index===t.index?game.scout.id:null;
       const guesses=seen?[[rank(seen),1]]:t.row==='back'?[['K',.48],['Q',.12],['J',.12],['10',.08],['8',.2]]:[['Q',.23],['J',.18],['10',.14],['A',.12],['8',.33]];
       let score=0;
       const occupiedGuard=[t.index-1,t.index+1].filter(i=>i>=0&&i<player(t.enemy)[t.row].length&&player(t.enemy)[t.row][i]).length;
@@ -1637,7 +1638,7 @@ app.addEventListener('click', event => {
   }
   if(storageError) return;
   if (action==='count') { draft.count=Number(button.dataset.value); render(); return; }
-  if (action==='difficulty') { if(['serf','captain','warlord'].includes(button.dataset.value))draft.difficulty=button.dataset.value; render(); return; }
+  if (action==='difficulty') { if(['serf','squire','knight'].includes(button.dataset.value))draft.difficulty=button.dataset.value; render(); return; }
   if (action==='mode') { draft.mode=button.dataset.value; render(); return; }
   if (action==='layout') { draft.layout=button.dataset.value==='classic'?'classic':'expanded'; render(); return; }
   if (action==='start') { rememberPlayerName(draft.names[0]);rememberPlayerEmoji(draft.emojis[0]);clearLinkError(); return commit(newGame); }
