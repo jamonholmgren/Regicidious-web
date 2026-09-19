@@ -341,7 +341,7 @@ function recordSoloScore(saved) {
   if(!entry)return;
   const prior=readScoreTable();
   const merged=ScoreCodec.merge(prior,[entry]);
-  if(merged.conflicts)scoreImportNotice='A restored game shares an existing score ID but differs from it. The existing score was kept.';
+  if(merged.conflicts)scoreImportNotice='This game already had a recorded score, which was kept.';
   const encoded=ScoreCodec.encode(merged.entries);
   if(localStorage.getItem(SCORES_KEY)!==encoded)localStorage.setItem(SCORES_KEY,encoded);
 }
@@ -483,19 +483,31 @@ function cardHTML(id, action, location, index, opts={}) {
   const selected = game?.selection && game.selection.location === location && game.selection.index === index;
   const attrs = action ? `data-action="${action}" data-location="${location}" data-index="${index}"` : 'disabled';
   const place=opts.owner!=null?`${player(opts.owner).name}, ${opts.row} slot ${index+1}, `:'';
+  const queenLink=opts.className?.includes('queen-linked')?' style="border-color:#e9be74;outline:1px solid #f6d899;outline-offset:1px;box-shadow:0 4px 0 #10251e,0 0 12px #e9be7470"':opts.className?.includes('queen-attendant')?' style="border-color:#e9be74;box-shadow:0 4px 0 #10251e,0 0 9px #e9be7455"':'';
   if (!id) return `<button class="card empty ${opts.buyConfirm?'buy-armed':''} ${opts.className||''}" ${attrs} aria-label="${escapeHTML(place)}${opts.buyConfirm?'tap again to hire for two coins':'empty slot'}">${opts.buyConfirm?'2 ◉':'+'}</button>`;
   if (opts.hidden) return `<button class="card back ${opts.target?'target':''} ${opts.className||''}" ${attrs} aria-label="${escapeHTML(place)}face-down card"><span class="center">♛</span></button>`;
   const r=rank(id),role={A:'ASSASSIN','10':'KNIGHT',J:'JACK',Q:'QUEEN',K:'KING'}[r]||'';
-  return `<button class="card ${['♥','♦'].includes(suit(id))?'red':''} ${selected?'selected':''} ${opts.className||''}" ${attrs} aria-label="${escapeHTML(place)}${label(id)}${role?`, ${role.toLowerCase()}`:''}" aria-pressed="${Boolean(selected)}"><span class="rank">${r}<small>${suit(id)}</small></span><span class="center">${suit(id)}</span>${role?`<span class="card-role">${role}</span>`:''}<span class="rank foot">${r}<small>${suit(id)}</small></span></button>`;
+  return `<button class="card ${['♥','♦'].includes(suit(id))?'red':''} ${selected?'selected':''} ${opts.className||''}"${queenLink} ${attrs} aria-label="${escapeHTML(place)}${label(id)}${role?`, ${role.toLowerCase()}`:''}" aria-pressed="${Boolean(selected)}"><span class="rank">${r}<small>${suit(id)}</small></span><span class="center">${suit(id)}</span>${role?`<span class="card-role">${role}</span>`:''}<span class="rank foot">${r}<small>${suit(id)}</small></span></button>`;
 }
 function lineHTML(cards, action, location, hidden=false) { return `<div class="line">${cards.map((id,i) => cardHTML(id,action,location,i,{hidden})).join('')}</div>`; }
+function syncGameHash(){
+  const inMatch=!!game&&slotId&&!hubOpen&&!incomingBackup&&!incomingScores&&!tutorialOpen&&!scoresOpen&&!linkLoading;
+  const current=location.hash;
+  if(!(current===''||current.startsWith('#game=')))return;
+  const wanted=inMatch?`#game=${slotId}`:'';
+  if(current===wanted)return;
+  if(typeof history==='undefined'||typeof history.replaceState!=='function')return;
+  try{history.replaceState(null,'',location.pathname+location.search+wanted);}catch(error){console.error(error);}
+}
 function frame(content,compact=false) {
   const inMatch=!!game&&!hubOpen&&!incomingBackup&&!incomingScores&&!tutorialOpen&&!scoresOpen;
   const ladder=!inMatch&&!hubOpen?ratingStandings():null;
   const eloPill=ladder?`<button class="pill" data-action="scores-open" title="Solo Elo and records">Elo: ${Math.round(ladder.ratings.human).toLocaleString()}</button>`:'';
-  const topAction=inMatch?matchReplay||computerPlayback?'':`<button class="pill" data-action="toggle-sheet" aria-label="Game details">☰</button>`:hubOpen?'':`${eloPill}<button class="pill" data-action="games">Games</button>`;
+  const gamesPill=`<button class="pill" data-action="games">Games</button>`;
+  const topAction=inMatch?matchReplay||computerPlayback?'':`<button class="pill" data-action="toggle-sheet" aria-label="Match details">Details</button>${gamesPill}`:hubOpen?'':`${eloPill}${gamesPill}`;
   const credit=`<p class="notice">${creditLine}<br><span class="perf">${timingLine()}</span></p>`;
   app.innerHTML = `<main class="app ${compact?'compact-app':''}"><header class="top ${compact?'compact-top':''}"><button type="button" class="brand" data-action="reload" aria-label="Reload Regicidious" title="Reload page">♛ Regicidious</button><div class="top-actions">${topAction}</div></header>${storageError?`<div class="status" role="alert">${storageError}</div>`:''}${backupError?`<div class="status" role="alert">${backupError}</div>`:''}${content}${!compact&&!game&&!hubOpen&&!incomingBackup&&!incomingScores&&!scoresOpen&&!tutorialOpen?pastePanel():''}${!compact&&inMatch?arenaDetails():''}${compact?'':credit}</main>`;
+  syncGameHash();
 }
 function shortTileName(name,count){
   const chars=Array.from(name.trim()),max=count>2?10:13;
@@ -532,14 +544,14 @@ function renderScores() {
   let entries=[];
   try { entries=readScoreTable(); } catch(error){scoreLinkError='This score table could not be read. Its saved data was kept.';console.error(error);}
   const ladder=ratingStandings();
-  const elo=ladder?`<section class="panel rating-panel"><div class="phase">Personal Elo · vs computer</div><h2>You · ${Math.round(ladder.ratings.human).toLocaleString()}</h2><p class="muted small">${ladder.records.human.wins} wins · ${ladder.records.human.losses} losses</p><div class="rating-opponents">${Object.entries(PERSONA_NAMES).map(([id,name])=>`<div><strong>${name}</strong><span>${Math.round(ladder.ratings[id]).toLocaleString()} · ${ladder.records[id].wins}W ${ladder.records[id].losses}L</span></div>`).join('')}</div><p class="muted small">Each finished 1v1 transfers Elo between you and that opponent across both boards. The pool starts at 4,000 total; beating one bot repeatedly yields less each time.</p></section>`:'';
+  const elo=ladder?`<section class="panel rating-panel"><div class="phase">Personal Elo · vs computer</div><h2>You · ${Math.round(ladder.ratings.human).toLocaleString()}</h2><p class="muted small">${ladder.records.human.wins} wins · ${ladder.records.human.losses} losses</p><div class="rating-opponents">${Object.entries(PERSONA_NAMES).map(([id,name])=>`<div><strong>${name}</strong><span>${Math.round(ladder.ratings[id]).toLocaleString()} · ${ladder.records[id].wins}W ${ladder.records[id].losses}L</span></div>`).join('')}</div><p class="muted small">Beat a commander to take rating from them; lose and they take yours. Repeated wins over the same foe earn less each time.</p></section>`:'';
   ensureScoreLink();
   const slots=new Map(gameSlots().filter(s=>s.game.phase==='victory').map(s=>[s.game.matchId,s]));
   const rows=entries.filter(e=>e.layout===scoreLayout).map((e,i)=>{
     const saved=slots.get(e.id),replay=saved&&canReplay(saved.game);
     return `<section class="panel score-row"><div class="score-top"><strong>#${i+1} · ${e.score.toLocaleString()} points</strong><span>${scoreDate(e.date)}</span></div><p>${e.emoji} ${escapeHTML(e.name)} · ${PERSONA_NAMES[e.difficulty]} · ${e.turns} ${e.turns===1?'turn':'turns'}</p><p class="muted small">Match ${e.id.slice(0,8)}</p><div class="actions">${replay?`<button class="button secondary" data-action="replay-game" data-id="${saved.id}">Replay</button>`:`<span class="muted small">Replay unavailable${saved?'':' · restore the game backup'}</span>`}${saved?`<button class="button ghost" data-action="backup-slot" data-id="${saved.id}">Make game backup</button>`:''}</div>${saved&&backupForSlot===saved.id&&backupText?`<textarea readonly rows="3">${escapeHTML(backupText)}</textarea><button class="button secondary" data-action="copy-backup">Copy game link</button>`:''}</section>`;
   }).join('');
-  frame(`<section class="score-heading"><div class="phase">Personal records · solo 1v1</div><h1>High scores</h1><p>Victory earns 1,000 points, plus up to 1,000 for speed. Each extra commander turn costs 50 speed points. Serf ×1, Squire ×1.25, Knight ×1.5.</p></section>${scoreImportNotice?`<p class="status">${escapeHTML(scoreImportNotice)}</p>`:''}<div class="score-tabs"><button class="button ${scoreLayout==='expanded'?'':'secondary'}" data-action="score-layout" data-value="expanded">Expanded</button><button class="button ${scoreLayout==='classic'?'':'secondary'}" data-action="score-layout" data-value="classic">Classic</button></div>${ratingError?`<p class="status">${escapeHTML(ratingError)}</p>`:''}${elo}${rows||'<p class="muted">No solo 1v1 victories on this board yet.</p>'}<section class="panel"><h2>Keep your records</h2><p class="muted small">This link holds scores, match IDs, and rating results—not the games or their cards. Back up games separately if you want to replay them.</p>${scoreLinkError?`<p class="status">${escapeHTML(scoreLinkError)}</p>`:''}<div class="actions"><button class="button secondary" data-action="copy-scores" ${scoreLink?'':'disabled'}>Copy table link</button><button class="button secondary" data-action="share-scores" ${scoreLink?'':'disabled'}>Send table link</button></div><details><summary>Show score table link</summary><textarea readonly rows="3">${escapeHTML(scoreLink||'Preparing link…')}</textarea></details></section>${pastePanel()}`);
+  frame(`<section class="score-heading"><div class="phase">Personal records · solo 1v1</div><h1>High scores</h1><p>Victory earns 1,000 points, plus up to 1,000 for speed. Each extra commander turn costs 50 speed points. Serf ×1, Squire ×1.25, Knight ×1.5.</p></section>${scoreImportNotice?`<p class="status">${escapeHTML(scoreImportNotice)}</p>`:''}<div class="score-tabs"><button class="button ${scoreLayout==='expanded'?'':'secondary'}" data-action="score-layout" data-value="expanded">Expanded</button><button class="button ${scoreLayout==='classic'?'':'secondary'}" data-action="score-layout" data-value="classic">Classic</button></div>${ratingError?`<p class="status">${escapeHTML(ratingError)}</p>`:''}${elo}${rows||'<p class="muted">No solo 1v1 victories on this board yet.</p>'}<section class="panel"><h2>Keep your records</h2><p class="muted small">This link carries your scores and ratings, not the games themselves. Back up games separately if you want to replay them.</p>${scoreLinkError?`<p class="status">${escapeHTML(scoreLinkError)}</p>`:''}<div class="actions"><button class="button secondary" data-action="copy-scores" ${scoreLink?'':'disabled'}>Copy table link</button><button class="button secondary" data-action="share-scores" ${scoreLink?'':'disabled'}>Send table link</button></div><details><summary>Show score table link</summary><textarea readonly rows="3">${escapeHTML(scoreLink||'Preparing link…')}</textarea></details></section>${pastePanel()}`);
 }
 function setTutorialStep(step) {
   tutorialStep=step;tutorialDice=null;
@@ -594,7 +606,7 @@ function renderTutorial() {
 function renderScoreImport() {
   const classic=incomingScores.filter(e=>e.layout==='classic').length;
   const expanded=incomingScores.length-classic;
-  frame(`<section class="panel dispatch"><div class="phase">Personal score backup</div><h1>Restore high scores?</h1><p>${expanded} Expanded and ${classic} Classic scores${incomingRatings?`, plus ${incomingRatings.length} rating results`:''}. This link holds no cards or game replays.</p><p>Your current scores and games stay here. Matching game IDs are merged, not duplicated.</p><button class="button wide" data-action="restore-scores">Merge score table</button></section>`);
+  frame(`<section class="panel dispatch"><div class="phase">Personal score backup</div><h1>Restore high scores?</h1><p>${expanded} Expanded and ${classic} Classic scores${incomingRatings?`, plus ${incomingRatings.length} rating results`:''}.</p><p>Your current scores and games stay here. Results you already have are kept once.</p><button class="button wide" data-action="restore-scores">Merge score table</button></section>`);
 }
 function playerChips(saved) {
   return `<div class="dispatch-seats">${saved.players.map((p,i)=>`<span class="suit-chip">${p.emoji} ${SUITS[i]} ${escapeHTML(p.name)}</span>`).join('')}</div>`;
@@ -616,7 +628,7 @@ function renderTextWaiting() {
   ensureTurnLink();
   ensureInvites();
   const p=player(game.turn);
-  const invites=textAccess()===0?`<section class="panel"><h2>Invite players to their own seats</h2><p class="small muted">Send each player only their named invite once. Invites bind their device to that seat, even before their first turn.</p>${game.players.map((q,i)=>i===0?'':`<p>${escapeHTML(q.name)} ${SUITS[i]}</p>${inviteLinks[i]?.url?`<div class="actions"><button class="button secondary" data-action="copy-invite" data-index="${i}">Copy invite</button><button class="button secondary" data-action="share-invite" data-index="${i}">Share…</button></div><textarea readonly rows="2">${escapeHTML(inviteLinks[i].url)}</textarea>`:'<p class="small muted">Preparing invite…</p>'}`).join('')}</section>`:'';
+  const invites=textAccess()===0?`<section class="panel"><h2>Invite players to their own seats</h2><p class="small muted">Send each player their own invite once. Opening it claims that seat on their device.</p>${game.players.map((q,i)=>i===0?'':`<p>${escapeHTML(q.name)} ${SUITS[i]}</p>${inviteLinks[i]?.url?`<div class="actions"><button class="button secondary" data-action="copy-invite" data-index="${i}">Copy invite</button><button class="button secondary" data-action="share-invite" data-index="${i}">Share…</button></div><textarea readonly rows="2">${escapeHTML(inviteLinks[i].url)}</textarea>`:'<p class="small muted">Preparing invite…</p>'}`).join('')}</section>`:'';
   const settingUp=game.phase==='setup';
   const summary=`<section class="waiting-summary"><div class="crown">${p.emoji}</div><div><div class="phase">${settingUp?`Battle lines · ${game.setup+1} of ${game.players.length}`:`Text multiplayer · turn #${game.turnNumber}`}</div><h1>${escapeHTML(p.name)}’s ${settingUp?'battle lines':'turn'}</h1><p>Send the next link to ${escapeHTML(p.name)}. Your copy waits here.</p></div></section>`;
   const actions=turnLink?`<div class="actions"><button class="button" data-action="copy-turn">Copy message</button><button class="button secondary" data-action="share-turn">Send text to ${escapeHTML(p.name)}</button></div><details class="share-detail"><summary>Show message and link</summary><textarea readonly rows="5" aria-label="Message and link">${escapeHTML(shareMessage(game,turnLink))}</textarea></details>`:'<p class="muted small">Preparing a private turn link…</p>';
@@ -668,6 +680,11 @@ function renderOpponents() {
 }
 function arenaRow(owner,row,own,mode,visual) {
   const p=player(owner);
+  // The Queen draws her extra die from one adjacent peasant. Mark that pair
+  // while the player is choosing an attack, rather than adding more UI text.
+  const queenIndex=own&&mode==='attack'&&!visual?p[row].findIndex(id=>id&&rank(id)==='Q'):-1;
+  const attendant=queenIndex<0?null:adjacentPeasants(p,row,queenIndex)
+    .sort((a,b)=>value(a.id)-value(b.id)||a.index-b.index)[0];
   const cards=p[row].map((id,index)=>{
     let action='';
     if(own && ['setup','buy','arrange','refill'].includes(mode))action='slot';
@@ -680,7 +697,8 @@ function arenaRow(owner,row,own,mode,visual) {
     const reveal=source||target&&visual?.revealTarget||!own && mode==='battle' && game.pending?.defender===owner && game.pending.target.row===row && game.pending.target.index===index;
     const hidden=visual?.revealAll?false:visual?(!own||visual.hideOwnOthers||player(owner).cpu)&&!reveal:!own&&!reveal;
     const active=source||target&&visual?.showTarget;
-    const className=visual?`${!active?'replay-dim':''} ${active?'replay-active':''} ${source&&visual.kind==='reveal'?'replay-flip':''} ${loser?'replay-loser':''} ${winner?'replay-winner':''}`:'';
+    const linkClass=!visual&&index===queenIndex?'queen-linked':!visual&&index===attendant?.index?'queen-attendant':'';
+    const className=visual?`${!active?'replay-dim':''} ${active?'replay-active':''} ${source&&visual.kind==='reveal'?'replay-flip':''} ${loser?'replay-loser':''} ${winner?'replay-winner':''}`:linkClass;
     return cardHTML(id,action,own?row:`${owner}:${row}`,index,{hidden,owner,row,target:reveal,className,buyConfirm:own&&['buy','arrange'].includes(mode)&&buyPrompt?.location===row&&buyPrompt.index===index});
   });
   const wide=p[row].length>3?' cols-4':'';
@@ -688,7 +706,7 @@ function arenaRow(owner,row,own,mode,visual) {
 }
 function arenaDetails() {
   if(!sheetOpen)return '';
-  const share=game.mode==='text'?`<p class="small muted">Turn #${game.turnNumber}: ${escapeHTML(player(game.turn).name)}</p>${replayLastButton()}<p class="small muted">${game.phase==='invite'?'Send each player their private invitation.':textAccess()===game.turn?'Finish your turn to create the next player’s link.':'Waiting for the next full-state update link.'}</p>`:'';
+  const share=game.mode==='text'?`<p class="small muted">Turn #${game.turnNumber}: ${escapeHTML(player(game.turn).name)}</p>${replayLastButton()}<p class="small muted">${game.phase==='invite'?'Send each player their private invitation.':textAccess()===game.turn?'Finish your turn to create the next player’s link.':'Waiting for the next turn link.'}</p>`:'';
   const notice=game.mode==='text'?restoreNoticeText(game,textAccess()):'';
   const backup=`<p class="small muted">Back up this match before removing it if you may want to restore it later.</p><button class="button secondary wide" data-action="backup">Make Backup</button>${backupForSlot===slotId&&backupText?`<textarea readonly rows="3">${escapeHTML(backupText)}</textarea><button class="button secondary" data-action="copy-backup">Copy backup link</button>`:''}`;
   const dates=slotId?readDates(slotId):{started:0,last:0};
@@ -709,7 +727,8 @@ function renderArena(owner,mode,intro,controls,visual) {
   selectedOpponent=opponent;
   const target=opponent==null?null:player(opponent);
   const chooseOpponent=!visual||visual.revealAll&&!visual.source&&visual.opponent==null;
-  const switcher=chooseOpponent&&candidates.length>1?`<div class="opponent-switch"><strong>${escapeHTML(target.name)} ${SUITS[opponent]}</strong><div class="opponent-emojis">${candidates.map(i=>`<button data-action="opponent" data-index="${i}" class="${i===opponent?'active':''}" aria-label="View ${escapeHTML(player(i).name)}" aria-pressed="${i===opponent}">${player(i).emoji}</button>`).join('')}</div></div>`:`<strong>${target?`${target.emoji} ${escapeHTML(target.name)} ${SUITS[opponent]}`:'Your opponent'}</strong>`;
+  const heading=`<strong>${target?`${target.emoji} ${escapeHTML(target.name)} ${SUITS[opponent]}`:'Your opponent'}</strong>`;
+  const chips=chooseOpponent&&candidates.length>1?`<div class="opponent-chips" aria-label="Choose an opponent">${candidates.map(i=>`<button class="opponent-chip${i===opponent?' active':''}" data-action="opponent" data-index="${i}" aria-label="View ${escapeHTML(player(i).name)}" aria-pressed="${i===opponent}"><span class="chip-emoji">${player(i).emoji}</span><span class="chip-name">${escapeHTML(player(i).name)}</span></button>`).join('')}</div>`:'';
   const prepareHint=(mode==='buy'||mode==='arrange')&&!visual?intro:null;
   const middleText=visual||mode==='refill'?intro:prepareHint?(game.message?`${game.message} ${intro}`:intro):(game.message||intro);
   let middle=`<div class="arena-instruction">${escapeHTML(middleText)}</div>`;
@@ -723,7 +742,7 @@ function renderArena(owner,mode,intro,controls,visual) {
   const seenReserve=visual?.revealAll&&target?.reserve?.length?`<div class="arena-row"><span class="arena-label">Reserve</span><div class="reserve">${target.reserve.map((id,i)=>cardHTML(id,'','reserve',i,{owner:opponent,row:'reserve'})).join('')}</div></div>`:'';
   const last=visual? '':replayLastButton(true);
   const attackStatus=['attack','battle','replay'].includes(mode)?` · ${game.attacks}/${attackLimit()} attacks`:'';
-  frame(`<section class="arena" aria-label="Battlefield"><div class="arena-opponent"><div class="arena-hud">${switcher}<span>${target?`${target.front.filter(Boolean).length+target.back.filter(Boolean).length} cards`:''}</span></div>${target?arenaRow(opponent,'back',false,mode,visual):''}${target?arenaRow(opponent,'front',false,mode,visual):''}${seenReserve}</div><div class="arena-middle">${middle}</div><div class="arena-self"><div class="arena-hud"><strong>${own.emoji} ${escapeHTML(own.name)} ${SUITS[owner]}</strong><span>◉ ${own.coins}${attackStatus}</span></div>${arenaRow(owner,'front',true,mode,visual)}${arenaRow(owner,'back',true,mode,visual)}${arenaReserve(owner,visual)}</div><div class="arena-dock ${visual?'replay-dock':''}${last?' with-last':''}">${controls}${last}</div></section>${arenaDetails()}`,true);
+  frame(`<section class="arena" aria-label="Battlefield"><div class="arena-opponent">${chips}<div class="arena-hud">${heading}<span>${target?`${target.front.filter(Boolean).length+target.back.filter(Boolean).length} cards`:''}</span></div>${target?arenaRow(opponent,'back',false,mode,visual):''}${target?arenaRow(opponent,'front',false,mode,visual):''}${seenReserve}</div><div class="arena-middle">${middle}</div><div class="arena-self"><div class="arena-hud"><strong>${own.emoji} ${escapeHTML(own.name)} ${SUITS[owner]}</strong><span>◉ ${own.coins}${attackStatus}</span></div>${arenaRow(owner,'front',true,mode,visual)}${arenaRow(owner,'back',true,mode,visual)}${arenaReserve(owner,visual)}</div><div class="arena-dock ${visual?'replay-dock':''}${last?' with-last':''}">${controls}${last}</div></section>${arenaDetails()}`,true);
 }
 function renderPlay() {
   const p = player(game.turn);
@@ -1119,12 +1138,12 @@ function renderVictory() {
   if(game.mode==='text')ensureTurnLink();
   const score=ScoreCodec.entryFromGame(game);
   const rated=RatingCodec.fromGame(game),ladder=rated?ratingStandings():null,change=rated&&ladder?.changes[rated.id];
-  const ratingPanel=change?`<section class="panel"><h2>Your Elo · ${Math.round(change.after).toLocaleString()}</h2><p class="muted">${change.delta>=0?'+':''}${Math.round(change.delta)} against ${escapeHTML(player(1).name)}. One rating covers both boards.</p><button class="button secondary wide" data-action="scores-open">See ratings & high scores</button></section>`:'';
-  const scorePanel=score?`<section class="panel"><h2>${score.score.toLocaleString()} points</h2><p class="muted">${score.turns} commander ${score.turns===1?'turn':'turns'} against ${PERSONA_NAMES[score.difficulty]}. Your score is saved in the ${score.layout} table.</p><button class="button secondary wide" data-action="scores-open">See high scores</button></section>`:'';
-  frame(`<section class="hero"><div class="crown">♛</div><div class="phase">The kingdom stands</div><h1>${escapeHTML(winner.name)} wins.</h1><p>${SUITS[winner.suit]} ${NAMES[winner.suit]} is the last kingdom standing.</p></section>${ratingPanel}${scorePanel}${canReplayLast()||canReplay(game)?`<section class="panel"><h2>Watch it again</h2><p class="muted small">${canReplay(game)?'Replay every turn with all cards visible. The saved game is not changed.':'Watch the last fights again. Cards return to their hidden live faces afterward.'}</p>${replayLastButton()}${canReplay(game)?`<button class="button wide" data-action="replay-game">Replay game</button>`:''}</section>`:''}${game.mode==='text'?`<section class="panel"><h2>Tell the group</h2>${turnLink?`<div class="actions"><button class="button" data-action="copy-turn">Copy result</button><button class="button secondary" data-action="share-turn">Send result to group</button></div>`:'<p class="muted">Preparing result link…</p>'}</section>`:''}<section class="panel"><h2>Another game?</h2><p class="muted small">Starting another game leaves this one in your Games list.</p><button class="button secondary wide" data-action="new-after-win">New game</button></section>`);
+  const ratingPanel=change?`<section class="panel"><h2>Your Elo · ${Math.round(change.after).toLocaleString()}</h2><p class="muted">${change.delta>=0?'+':''}${Math.round(change.delta)} against ${escapeHTML(player(1).name)}.</p><button class="button secondary wide" data-action="scores-open">See ratings & high scores</button></section>`:'';
+  const scorePanel=score?`<section class="panel"><h2>${score.score.toLocaleString()} points</h2><p class="muted">${score.turns} commander ${score.turns===1?'turn':'turns'} against ${PERSONA_NAMES[score.difficulty]}.</p><button class="button secondary wide" data-action="scores-open">See high scores</button></section>`:'';
+  frame(`<section class="hero"><div class="crown">♛</div><div class="phase">The kingdom stands</div><h1>${escapeHTML(winner.name)} wins.</h1><p>${SUITS[winner.suit]} ${NAMES[winner.suit]} is the last kingdom standing.</p></section>${ratingPanel}${scorePanel}${canReplayLast()||canReplay(game)?`<section class="panel"><h2>Watch it again</h2><p class="muted small">${canReplay(game)?'Replay every turn with all cards face up.':'Watch the last fights again.'}</p>${replayLastButton()}${canReplay(game)?`<button class="button wide" data-action="replay-game">Replay game</button>`:''}</section>`:''}${game.mode==='text'?`<section class="panel"><h2>Tell the group</h2>${turnLink?`<div class="actions"><button class="button" data-action="copy-turn">Copy result</button><button class="button secondary" data-action="share-turn">Send result to group</button></div>`:'<p class="muted">Preparing result link…</p>'}</section>`:''}<section class="panel"><h2>Another game?</h2><p class="muted small">Starting another game leaves this one in your Games list.</p><button class="button secondary wide" data-action="new-after-win">New game</button></section>`);
 }
 function renderStalemate() {
-  frame(`<section class="hero"><div class="crown">♛</div><h1>No winner yet.</h1><p>This match reached the computer-play safety limit. Its full state is saved in your Games list.</p></section><section class="panel"><button class="button secondary wide" data-action="new-game">Start another game</button></section>`);
+  frame(`<section class="hero"><div class="crown">♛</div><h1>No winner yet.</h1><p>The computer could not bring this war to an end. The match is saved in your Games list.</p></section><section class="panel"><button class="button secondary wide" data-action="new-game">Start another game</button></section>`);
 }
 function render() {
   if(linkLoading)return frame(`<section class="panel"><h2>Opening game link…</h2><p class="muted">Checking and decrypting the match.</p></section>`);
@@ -1371,7 +1390,7 @@ function diceOdds(a,d) { return ODDS[a][d]; }
 function runAI(maxSteps=2000) {
   let steps=0;
   while(game.phase!=='victory' && player(game.turn).cpu) {
-    if(++steps>maxSteps) { game.phase='stalemate';game.message='Computer-play safety limit reached.';return; }
+    if(++steps>maxSteps) { game.phase='stalemate';game.message='The computer could not bring this war to an end.';return; }
     const p=player(game.turn);
     if(game.phase==='buy') {
       while(p.coins>=2 && p.deck.length && p.reserve.length<3) { p.coins-=2; const drawn=drawCard(p); p.reserve.push(drawn); record({t:'buy',card:drawn}); }
@@ -1489,7 +1508,7 @@ app.addEventListener('click', event => {
       const ratings=incomingRatings?RatingCodec.merge(readRatingLedger(),incomingRatings):null;
       if(ratings)localStorage.setItem(RATING_KEY,RatingCodec.encode(ratings.events));
       localStorage.setItem(SCORES_KEY,ScoreCodec.encode(merged.entries));
-      scoreImportNotice=merged.conflicts||ratings?.conflicts.length?'Records merged. Conflicting match IDs kept their local results.':'Records merged with your existing games and scores.';
+      scoreImportNotice=merged.conflicts||ratings?.conflicts.length?'Records merged. Where they disagreed, the results already on this device were kept.':'Records merged with your existing games and scores.';
       incomingScores=null;incomingRatings=null;scoresOpen=true;hubOpen=false;history.replaceState(null,'',location.pathname+location.search);render();
     }catch(error){backupError='Could not save the score table. Your existing records were kept.';console.error(error);render();}
     return;
@@ -1746,7 +1765,15 @@ window.addEventListener('keydown', event => {
   if(event.key==='Escape'){event.preventDefault();stopMatchReplay();render();}
 });
 if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(console.error));
-if(!/^#(?:turn|backup|scores)=/.test(location.hash) && gameSlots().length&&!tutorialOpen)hubOpen=true;
+const gameHash=/^#game=([a-f0-9]{16})$/.exec(location.hash);
+if(gameHash){
+  let chosen=null;
+  try{chosen=readSlot(gameHash[1]);}catch(error){console.error(error);}
+  if(chosen){if(tutorialOpen)closeTutorial();game=chosen;slotId=gameHash[1];hubOpen=false;try{localStorage.setItem(ACTIVE_KEY,slotId);}catch{}}
+  else{hubNotice='That game is no longer on this device. A saved backup link can restore it.';hubOpen=true;history.replaceState(null,'',location.pathname+location.search);}
+} else if(location.hash.startsWith('#game=')){
+  hubNotice='That game is no longer on this device. A saved backup link can restore it.';hubOpen=true;history.replaceState(null,'',location.pathname+location.search);
+} else if(!/^#(?:turn|backup|scores)=/.test(location.hash) && gameSlots().length&&!tutorialOpen)hubOpen=true;
 render();
 let incomingRequest=0;
 let lastIncomingLocationHash='';
