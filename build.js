@@ -1,1 +1,0 @@
-window.REGICIDIOUS_BUILD = 37;

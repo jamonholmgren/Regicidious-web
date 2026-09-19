@@ -55,7 +55,8 @@ try { tutorialOpen=localStorage.getItem('regicidious.tutorial.open')==='1';tutor
 const milliseconds=n=>`${n.toFixed(2)} ms`;
 const timingLine=()=>timings.render===null?'':`Last move: logic ${milliseconds(timings.logic)} · save ${milliseconds(timings.save)} · render ${milliseconds(timings.render)}`;
 const creditLine='Original game by Shane Holmgren<br>Digital adaptation by Jamon Holmgren, <a href="https://jammin.games/" target="_blank" rel="noopener noreferrer">Jammin Games</a>';
-const buildLine=Number.isInteger(globalThis.REGICIDIOUS_BUILD)?`Build ${globalThis.REGICIDIOUS_BUILD}`:'Build local';
+const BUILD=40;
+const buildLine=BUILD>0?`Build ${BUILD}`:'Build local';
 
 try {
   const legacy=localStorage.getItem(KEY);
@@ -180,9 +181,12 @@ function validateState(saved) {
   saved.finishedAt??=0;saved.scoreVersion??=0;
   if(!Number.isInteger(saved.finishedAt)||saved.finishedAt<0||saved.finishedAt>4e12||![0,1].includes(saved.scoreVersion))bad();
   saved.restoreNotices??=[];
+  // Early versions marked ordinary invitation claims as suspicious. Those
+  // claims are normal, so old invite notices are deliberately discarded.
+  if(Array.isArray(saved.restoreNotices))saved.restoreNotices=saved.restoreNotices.filter(alert=>alert?.kind!=='invite');
   if(!Array.isArray(saved.restoreNotices)||saved.restoreNotices.length>count||saved.restoreNotices.length&&saved.mode!=='text'||
     new Set(saved.restoreNotices.map(n=>n.seat)).size!==saved.restoreNotices.length||
-    saved.restoreNotices.some(n=>!validIndex(n.seat,count)||!['invite','backup'].includes(n.kind)||
+    saved.restoreNotices.some(n=>!validIndex(n.seat,count)||n.kind!=='backup'||
       !Number.isInteger(n.turnNumber)||n.turnNumber<1||n.turnNumber>saved.turnNumber))bad();
   if(!Number.isInteger(saved.startedAt)||saved.startedAt<0||saved.startedAt>4e12)bad();
   if(typeof saved.matchId!=='string'||saved.matchId&&!/^[a-f0-9]{32}$/.test(saved.matchId)||saved.mode==='text'&&!saved.matchId||!Number.isInteger(saved.turnNumber)||saved.turnNumber<1||saved.turnNumber>1000000)bad();
@@ -294,7 +298,7 @@ function lastBattleSentence(saved) {
 }
 function restoreNoticeText(saved,viewer=saved.turn) {
   return (saved.restoreNotices||[]).filter(alert=>alert.seat!==viewer).map(alert=>
-    `${saved.players[alert.seat].name} rejoined from ${alert.kind==='invite'?'an invite':'a backup'} before their last move. This is a heads-up, not proof of cheating.`).join(' ');
+    `${saved.players[alert.seat].name} restored a known seat from a backup before their last move. This is a heads-up, not proof of cheating.`).join(' ');
 }
 function shareMessage(saved,url) {
   if(saved.phase==='victory')return `${saved.players.find(p=>p.alive)?.name||'A kingdom'} wins Regicidious! ${lastBattleSentence(saved)} ${url}`;
@@ -1608,15 +1612,15 @@ app.addEventListener('click', event => {
   if(action==='restore-backup' && incomingBackup) {
     const restored=incomingBackup,kind=incomingKind,seat=incomingSeat;
     const existing=restored.mode==='text'?gameSlots().find(s=>s.game.matchId===restored.matchId):null;
+    const knownSeat=restored.mode==='text'?recallSeat(restored.matchId):null;
     if(restored.mode==='text'){
-      const bound=recallSeat(restored.matchId);
       const victoryView=kind==='turn'&&restored.phase==='victory';
-      if(kind==='turn'&&bound==null&&!victoryView){
+      if(kind==='turn'&&knownSeat==null&&!victoryView){
         incomingBackup=null;incomingKind=null;incomingSeat=null;
         backupError='This browser has no seat in that match. Open your own invite first, or paste the turn link into the Home Screen app where you joined.';
         hubOpen=true;render();return;
       }
-      if(kind==='backup'&&(seat==null||bound!=null&&Number(bound)!==seat)){
+      if(kind==='backup'&&(seat==null||knownSeat!=null&&Number(knownSeat)!==seat)){
         incomingBackup=null;incomingKind=null;incomingSeat=null;
         backupError='This link belongs to a different seat in a match already known on this device.';
         hubOpen=true;render();return;
@@ -1638,8 +1642,8 @@ app.addEventListener('click', event => {
       const localNotices=kind==='turn'?existing?.game.restoreNotices?.filter(n=>n.seat===Number(recallSeat(restored.matchId)))||[]:[];
       game=restored;slotId=existing?.id??makeSlotId();backupText='';hubOpen=false;scoresOpen=false;
       if(localNotices.length)game.restoreNotices=[...game.restoreNotices.filter(n=>n.seat!==localNotices[0].seat),...localNotices];
-      if(restored.mode==='text'&&kind==='backup'&&seat!=null&&!['invite','victory'].includes(restored.phase)){
-        game.restoreNotices=[...game.restoreNotices.filter(n=>n.seat!==seat),{seat,kind:restored.phase==='invite'?'invite':'backup',turnNumber:restored.turnNumber}];
+      if(restored.mode==='text'&&kind==='backup'&&seat!=null&&knownSeat!=null&&Number(knownSeat)===seat&&restored.turnNumber>1&&restored.phase!=='victory'){
+        game.restoreNotices=[...game.restoreNotices.filter(n=>n.seat!==seat),{seat,kind:'backup',turnNumber:restored.turnNumber}];
       }
       if(keep){
         game.history=keep;
