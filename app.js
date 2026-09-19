@@ -12,6 +12,7 @@ const RATING_KEY = 'regicidious.ratings.v1';
 const MIGRATED_KEY = 'regicidious.legacy-imported';
 const SUITS = ['♠', '♥', '♣', '♦'];
 const NAMES = ['Spades', 'Hearts', 'Clubs', 'Diamonds'];
+const BANNER_NAMES = ['Aldric','Ansel','Baldwin','Cedric','Edric','Godric','Hawthorne','Leofric','Merrick','Osric','Percival','Rowan','Theobald','Ulric'];
 const RANKS = ['A','2','3','4','5','6','7','8','9','10','J','Q','K'];
 const EMOJIS = StateCodec.emojis;
 const PERSONA_NAMES={serf:'Serf',squire:'Squire',knight:'Knight'};
@@ -19,7 +20,8 @@ const app = document.querySelector('#app');
 let game = null;
 let slotId=null,hubOpen=false;
 let storageError = '';
-let draft = { mode:'solo',count:2, layout:'expanded',difficulty:'squire', names: ['You','Crimson Court','Iron Court','Ember Court'],emojis:EMOJIS.slice(0,4) };
+const defaultBannerName=BANNER_NAMES[Math.floor(Math.random()*BANNER_NAMES.length)];
+let draft = { mode:'solo',count:2, layout:'expanded',difficulty:'squire', names: [defaultBannerName,'Crimson Court','Iron Court','Ember Court'],emojis:EMOJIS.slice(0,4) };
 try {
   const rememberedName=localStorage.getItem(PLAYER_NAME_KEY);
   if(rememberedName!=null&&rememberedName.trim())draft.names[0]=rememberedName.slice(0,24);
@@ -55,7 +57,7 @@ try { tutorialOpen=localStorage.getItem('regicidious.tutorial.open')==='1';tutor
 const milliseconds=n=>`${n.toFixed(2)} ms`;
 const timingLine=()=>timings.render===null?'':`Last move: logic ${milliseconds(timings.logic)} · save ${milliseconds(timings.save)} · render ${milliseconds(timings.render)}`;
 const creditLine='Original game by Shane Holmgren<br>Digital adaptation by Jamon Holmgren, <a href="https://jammin.games/" target="_blank" rel="noopener noreferrer">Jammin Games</a>';
-const BUILD=46;
+const BUILD=47;
 const buildLine=BUILD>0?`Build ${BUILD}`:'Build local';
 
 try {
@@ -629,7 +631,7 @@ function renderTutorial() {
   const dice=tutorialDice||(step===4?{own:[2,5],enemy:[4]}:step===7?{own:[3],enemy:[1,4,6]}:null);
   const diceHTML=dice?`<div class="tutorial-dice"><div>${enemyTurn?'Sir Strawhelm':'You'} ${diceFaces(enemyTurn?dice.enemy:dice.own,!tutorialRolling)}</div><span>vs</span><div>${enemyTurn?'You':'Sir Strawhelm'} ${diceFaces(enemyTurn?dice.own:dice.enemy,!tutorialRolling)}</div></div>`:'';
   const action=step===3||step===6?`<button class="button wide" data-action="tutorial-roll" ${tutorialRolling?'disabled':''}>${tutorialRolling?'The dice tumble…':'Cast the dice →'}</button>`:step===1||step===2?'':step===8?'<div class="actions"><button class="button" data-action="tutorial-finish">Begin a true war →</button><button class="button secondary" data-action="tutorial-restart">Drill again</button></div>':`<button class="button wide" data-action="tutorial-next">${step===5?'Claim 2 coins →':'Continue →'}</button>`;
-  frame(`<section class="tutorial-page"><div class="phase">Training grounds · ${step}/8</div><h1>${headings[step]}</h1><p class="tutorial-guidance">${words[step]}</p><div class="tutorial-board"><div class="tutorial-side"><strong>🪵 Sir Strawhelm ♥</strong>${row(enemyBack,1,'back')}${row(enemyFront,1,'front')}</div>${diceHTML}<div class="tutorial-side"><strong>${draft.emojis[0]} You ♠ · ◉ ${step>=6?2:0}</strong>${row(ownFront,0,'front')}${row(ownBack,0,'back')}</div></div>${action}</section>`);
+  frame(`<section class="tutorial-page"><div class="phase">Training grounds · ${step}/8</div><h1>${headings[step]}</h1><p class="tutorial-guidance">${words[step]}</p><div class="tutorial-board"><div class="tutorial-side"><strong>🪵 Sir Strawhelm ♥</strong>${row(enemyBack,1,'back')}${row(enemyFront,1,'front')}</div>${diceHTML}<div class="tutorial-side"><strong>${draft.emojis[0]} ${escapeHTML(draft.names[0])} ♠ · ◉ ${step>=6?2:0}</strong>${row(ownFront,0,'front')}${row(ownBack,0,'back')}</div></div>${action}</section>`);
 }
 function renderScoreImport() {
   const classic=incomingScores.filter(e=>e.layout==='classic').length;
@@ -1168,7 +1170,7 @@ function renderVictory() {
   const rated=RatingCodec.fromGame(game),ladder=rated?ratingStandings():null,change=rated&&ladder?.changes[rated.id];
   const ratingPanel=change?`<section class="panel"><h2>Your Elo · ${Math.round(change.after).toLocaleString()}</h2><p class="muted">${change.delta>=0?'+':''}${Math.round(change.delta)} against ${escapeHTML(player(1).name)}.</p><button class="button secondary wide" data-action="scores-open">See ratings & high scores</button></section>`:'';
   const scorePanel=score?`<section class="panel"><h2>${score.score.toLocaleString()} points</h2><p class="muted">${score.turns} commander ${score.turns===1?'turn':'turns'} against ${PERSONA_NAMES[score.difficulty]}.</p><button class="button secondary wide" data-action="scores-open">See high scores</button></section>`:'';
-  const victoryHeadline=winner.name==='You'?'You claim the crown.':`${escapeHTML(winner.name)} claims the crown.`;
+  const victoryHeadline=winner.name==='You'?'Your kingdom claims the crown.':`${escapeHTML(winner.name)} claims the crown.`;
   frame(`<section class="hero"><div class="crown">♛</div><div class="phase">The kingdom stands</div><h1>${victoryHeadline}</h1><p>${SUITS[winner.suit]} ${NAMES[winner.suit]} is the last kingdom standing.</p></section>${ratingPanel}${scorePanel}${canReplayLast()||canReplay(game)?`<section class="panel"><h2>Witness the campaign</h2><p class="muted small">${canReplay(game)?'Replay every turn with all cards face up.':'Watch the last clashes again.'}</p>${replayLastButton()}${canReplay(game)?`<button class="button wide" data-action="replay-game">Replay campaign</button>`:''}</section>`:''}${game.mode==='text'?`<section class="panel"><h2>Tell the war council</h2>${turnLink?`<div class="actions"><button class="button" data-action="copy-turn">Copy dispatch</button><button class="button secondary" data-action="share-turn">Send result to group</button></div>`:'<p class="muted">Sealing the final dispatch…</p>'}</section>`:''}<section class="panel"><h2>Raise another banner?</h2><p class="muted small">Starting another game leaves this one in thy Games list.</p><button class="button secondary wide" data-action="new-after-win">Begin another war</button></section>`);
 }
 function renderStalemate() {
