@@ -7,8 +7,10 @@ const DELETED_PREFIX = 'regicidious.deleted.';
 const ACTIVE_KEY = 'regicidious.active';
 const PLAYER_NAME_KEY = 'regicidious.player-name';
 const PLAYER_EMOJI_KEY = 'regicidious.player-emoji';
+const LAYOUT_KEY = 'regicidious.layout';
 const SCORES_KEY = 'regicidious.scores.v1';
 const RATING_KEY = 'regicidious.ratings.v1';
+const LEADERBOARD_KEY = 'regicidious.leaderboard.v1';
 const MIGRATED_KEY = 'regicidious.legacy-imported';
 const SUITS = ['♠', '♥', '♣', '♦'];
 const NAMES = ['Spades', 'Hearts', 'Clubs', 'Diamonds'];
@@ -21,8 +23,11 @@ let game = null;
 let slotId=null,hubOpen=false;
 let storageError = '';
 const defaultBannerName=BANNER_NAMES[Math.floor(Math.random()*BANNER_NAMES.length)];
-let draft = { mode:'solo',count:2, layout:'expanded',difficulty:'squire', names: [defaultBannerName,'Crimson Court','Iron Court','Ember Court'],emojis:EMOJIS.slice(0,4) };
+let preferredLayout='classic';
+let draft = { mode:'solo',count:2, layout:preferredLayout,difficulty:'squire', names: [defaultBannerName,'Crimson Court','Iron Court','Ember Court'],emojis:EMOJIS.slice(0,4) };
 try {
+  const rememberedLayout=localStorage.getItem(LAYOUT_KEY);
+  if(['classic','expanded'].includes(rememberedLayout)){preferredLayout=rememberedLayout;draft.layout=rememberedLayout;}
   const rememberedName=localStorage.getItem(PLAYER_NAME_KEY);
   if(rememberedName!=null&&rememberedName.trim())draft.names[0]=rememberedName.slice(0,24);
   const rememberedEmoji=localStorage.getItem(PLAYER_EMOJI_KEY);
@@ -36,6 +41,10 @@ function rememberPlayerEmoji(emoji) {
   try { localStorage.setItem(PLAYER_EMOJI_KEY,emoji); }
   catch { /* Saving a preference must not block a game move. */ }
 }
+function rememberLayout(layout){
+  preferredLayout=layout==='expanded'?'expanded':'classic';draft.layout=preferredLayout;scoreLayout=preferredLayout;
+  try { localStorage.setItem(LAYOUT_KEY,preferredLayout); } catch { /* The board can still be chosen without preference storage. */ }
+}
 let timings = {logic:null,save:null,render:null};
 let backupText='',incomingBackup=null,incomingKind=null,incomingSeat=null,backupError='',linkLoading=false,dispatchNotice=null;
 let selectedOpponent=null,sheetOpen=false,reserveOpen=false;
@@ -46,7 +55,7 @@ let turnLink='',turnLinkSource='',turnLinkBusy=false,turnLinkError='';
 let pasteOpen=false;
 let inviteLinks={};
 let setupOpen=false,installDismissed=false,deleteTimer=null,buyPrompt=null,buyPromptTimer=null,completedOpen=false;
-let scoresOpen=false,scoreLayout='expanded',scoreLink='',scoreLinkSource='',scoreLinkBusy=false,scoreLinkError='',incomingScores=null,incomingRatings=null,scoreImportNotice='';
+let scoresOpen=false,scoreLayout=preferredLayout,scoreLink='',scoreLinkSource='',scoreLinkBusy=false,scoreLinkError='',incomingScores=null,incomingRatings=null,scoreImportNotice='';
 let ratingError='',ratingReconciled=false;
 let tutorialOpen=false,tutorialStep=0,tutorialRolling=false,tutorialDice=null,tutorialTimer=null;
 const SEAT_COOKIE='rgseat_';
@@ -56,7 +65,7 @@ try { tutorialOpen=localStorage.getItem('regicidious.tutorial.open')==='1';tutor
 const milliseconds=n=>`${n.toFixed(2)} ms`;
 const timingLine=()=>timings.render===null?'':`Last move: logic ${milliseconds(timings.logic)} · save ${milliseconds(timings.save)} · render ${milliseconds(timings.render)}`;
 const creditLine='Original game by Shane Holmgren<br>Digital adaptation by Jamon Holmgren, <a href="https://jammin.games/" target="_blank" rel="noopener noreferrer">Jammin Games</a>';
-const BUILD=51;
+const BUILD=52;
 const buildLine=BUILD>0?`Build ${BUILD}`:'Build local';
 
 try {
@@ -327,7 +336,7 @@ function restoreNoticeText(saved,viewer=saved.turn) {
     `${saved.players[alert.seat].name} restored a known seat from a backup before their last move. This is a heads-up, not proof of cheating.`).join(' ');
 }
 function shareMessage(saved,url) {
-  if(saved.phase==='victory')return `${saved.players.find(p=>p.alive)?.name||'A kingdom'} claims the crown in Regicidious! ${lastBattleSentence(saved)} ${url}`;
+  if(saved.phase==='victory')return `News from the battlefront, m’lords! A crown has changed hands in Regicidious. Open this royal dispatch to learn whose banner still flies. ${url}`;
   if(saved.phase==='setup')return `${saved.players[saved.turn].name}, the enemy is at the gates! Set your battle lines in Regicidious. ${url}`;
   return `${lastBattleSentence(saved)} ${saved.players[saved.turn].name}, it’s your turn #${saved.turnNumber}. To arms! ${url}`;
 }
@@ -383,17 +392,48 @@ function readRatingLedger(){
   const raw=localStorage.getItem(RATING_KEY);
   return raw?RatingCodec.decode(raw):[];
 }
-function recordSoloRating(saved){
-  const event=RatingCodec.fromGame(saved);
+function ownRatings(){
+  try { const ratings=RatingCodec.standings(readRatingLedger()).ratings;return {humanElo:Math.round(ratings.human),computerElo:Math.round(ratings.computer)}; }
+  catch { return {humanElo:1000,computerElo:1000}; }
+}
+function leaderboardKey(p){return `${String(p.name||'').trim().toLowerCase()}|${p.emoji||''}`;}
+function readLeaderboard(){
+  try {
+    const list=JSON.parse(localStorage.getItem(LEADERBOARD_KEY)||'[]');
+    return Array.isArray(list)?list.filter(e=>e&&typeof e.name==='string'&&typeof e.emoji==='string'&&Number.isFinite(e.humanElo)&&Number.isFinite(e.computerElo)).slice(0,200):[];
+  } catch { return []; }
+}
+function updateLeaderboard(saved){
+  if(!saved?.players)return;
+  const byKey=new Map(readLeaderboard().map(e=>[leaderboardKey(e),e]));
+  for(const p of saved.players)if(!p.cpu){
+    const key=leaderboardKey(p);if(!key)continue;
+    byKey.set(key,{name:p.name.slice(0,24),emoji:p.emoji||'♛',humanElo:Math.round(p.humanElo??1000),computerElo:Math.round(p.computerElo??1000),updated:Date.now()});
+  }
+  try { localStorage.setItem(LEADERBOARD_KEY,JSON.stringify([...byKey.values()].sort((a,b)=>b.updated-a.updated).slice(0,200))); } catch { /* Auxiliary data must not block a match. */ }
+}
+function applyOwnRatings(saved,seat=saved?.mode==='text'?recallSeat(saved.matchId):0){
+  if(!saved?.players?.[seat]||saved.players[seat].cpu)return;
+  Object.assign(saved.players[seat],ownRatings());
+}
+function leaderboardPanel(){
+  const entries=readLeaderboard();
+  const rows=(key,label)=>[...entries].sort((a,b)=>b[key]-a[key]||a.name.localeCompare(b.name)).slice(0,20).map((p,i)=>`<div><strong>${i+1}. ${escapeHTML(p.emoji)} ${escapeHTML(p.name)}</strong><span>${Math.round(p[key]).toLocaleString()}</span></div>`).join('')||'<p class="muted small">Open a game update to begin your local roll of the realm.</p>';
+  return `<section class="panel rating-panel"><div class="phase">Local campaign leaderboard</div><h2>Human Elo</h2><div class="rating-opponents">${rows('humanElo','Human')}</div><h2 style="margin-top:20px">Computer Elo</h2><div class="rating-opponents">${rows('computerElo','Computer')}</div><p class="muted small">Players from every game update you open appear here. It is shared by links among your group, not a public server leaderboard.</p></section>`;
+}
+function recordRating(saved){
+  const seat=saved.mode==='text'?recallSeat(saved.matchId):0;
+  const event=RatingCodec.fromGame(saved,seat);
   if(!event)return;
   const prior=readRatingLedger(),merged=RatingCodec.merge(prior,[event]);
   const encoded=RatingCodec.encode(merged.events);
   if(localStorage.getItem(RATING_KEY)!==encoded)localStorage.setItem(RATING_KEY,encoded);
+  applyOwnRatings(saved,seat);
 }
 function reconcileRatings(){
   if(ratingReconciled)return;
   const prior=readRatingLedger();
-  const recovered=gameSlots().map(slot=>RatingCodec.fromGame(slot.game)).filter(Boolean);
+  const recovered=gameSlots().map(slot=>RatingCodec.fromGame(slot.game,slot.game.mode==='text'?recallSeat(slot.game.matchId):0)).filter(Boolean);
   const merged=RatingCodec.merge(prior,recovered);
   if(merged.events.length!==prior.length)localStorage.setItem(RATING_KEY,RatingCodec.encode(merged.events));
   ratingReconciled=true;
@@ -442,7 +482,9 @@ function commit(change) {
   const started=performance.now();
   try {
     change();
-    if(game.phase==='victory'&&game.scoreVersion===1&&!game.finishedAt)game.finishedAt=Math.floor(Date.now()/1000)*1000;
+    if(game.phase==='victory'&&!game.finishedAt)game.finishedAt=Math.floor(Date.now()/1000)*1000;
+    if(game.phase==='victory')recordRating(game);
+    updateLeaderboard(game);
     timings.logic=performance.now()-started;
     const saving=performance.now();
     localStorage.setItem(SLOT_PREFIX+slotId, encodeForBackup(game));
@@ -461,7 +503,6 @@ function commit(change) {
   try { localStorage.setItem(ACTIVE_KEY,slotId); }
   catch (error) { console.error(error); }
   if(game.phase==='victory')try { recordSoloScore(game); } catch(error){scoreLinkError='Victory saved, but the score table could not be updated.';console.error(error);}
-  if(game.phase==='victory')try { recordSoloRating(game); } catch(error){ratingError='Match saved, but the rating ledger could not be updated.';console.error(error);}
   try {
     const now=Date.now(),dates=previousSlot===slotId?readDates(slotId):{started:now,last:now};
     localStorage.setItem(META_PREFIX+slotId,`${dates.started};${now}`);
@@ -479,19 +520,21 @@ function commit(change) {
 function newGame() {
   buyPrompt=null;clearTimeout(buyPromptTimer);setupOpen=false;turnAdjusted=false;minePick=false;
   slotId=makeSlotId();
-  const count = draft.count, layout=draft.layout==='classic'?'classic':'expanded';
+  const count = draft.count, layout=draft.layout==='classic'?'classic':'expanded', own=ownRatings(), known=new Map(readLeaderboard().map(e=>[leaderboardKey(e),e]));
   const players = Array.from({length:count}, (_,i) => {
     const pool = shuffle(RANKS.filter(r => !['J','Q','K'].includes(r)).map(r => `${i}-${r}`));
     if(layout==='classic'){
       const six = [`${i}-K`,`${i}-Q`,`${i}-J`,...pool.splice(0,3)];
       pool.sort((a,b)=>RANKS.indexOf(rank(a))-RANKS.indexOf(rank(b)));
-      const p={ name:draft.names[i].trim() || `Player ${i+1}`, emoji:draft.emojis[i], suit:i, cpu:draft.mode==='solo' && i!==0, persona:draft.mode==='solo'&&i!==0?draft.difficulty:null, front:[six[1],six[2],six[3]], back:[six[0],six[4],six[5]], reserve:[], deck:pool, coins:0, alive:true, miner:null };
+      const identity={name:draft.names[i].trim() || `Player ${i+1}`,emoji:draft.emojis[i]},profile=i===0?own:known.get(leaderboardKey(identity))||{humanElo:1000,computerElo:1000};
+      const p={ ...identity,humanElo:profile.humanElo,computerElo:profile.computerElo,suit:i, cpu:draft.mode==='solo' && i!==0, persona:draft.mode==='solo'&&i!==0?draft.difficulty:null, front:[six[1],six[2],six[3]], back:[six[0],six[4],six[5]], reserve:[], deck:pool, coins:0, alive:true, miner:null };
       if (p.cpu) arrangeAI(p);
       return p;
     }
     const seven = [`${i}-K`,`${i}-Q`,`${i}-J`,...pool.splice(0,4)];
     pool.sort((a,b)=>RANKS.indexOf(rank(a))-RANKS.indexOf(rank(b)));
-    const p={ name:draft.names[i].trim() || `Player ${i+1}`, emoji:draft.emojis[i], suit:i, cpu:draft.mode==='solo' && i!==0, persona:draft.mode==='solo'&&i!==0?draft.difficulty:null, front:[seven[1],seven[2],seven[3],seven[4]], back:[seven[0],seven[5],seven[6],null], reserve:[], deck:pool, coins:0, alive:true, miner:null };
+    const identity={name:draft.names[i].trim() || `Player ${i+1}`,emoji:draft.emojis[i]},profile=i===0?own:known.get(leaderboardKey(identity))||{humanElo:1000,computerElo:1000};
+    const p={ ...identity,humanElo:profile.humanElo,computerElo:profile.computerElo,suit:i, cpu:draft.mode==='solo' && i!==0, persona:draft.mode==='solo'&&i!==0?draft.difficulty:null, front:[seven[1],seven[2],seven[3],seven[4]], back:[seven[0],seven[5],seven[6],null], reserve:[], deck:pool, coins:0, alive:true, miner:null };
     if (p.cpu) arrangeAI(p);
     return p;
   });
@@ -546,7 +589,7 @@ function syncGameHash(){
 function frame(content,compact=false) {
   const inMatch=!!game&&!hubOpen&&!incomingBackup&&!incomingScores&&!tutorialOpen&&!scoresOpen;
   const ladder=!inMatch&&!hubOpen?ratingStandings():null;
-  const eloPill=ladder?`<button class="pill" data-action="scores-open" title="Solo Elo and records">Elo: ${Math.round(ladder.ratings.human).toLocaleString()}</button>`:'';
+  const eloPill=ladder?`<button class="pill" data-action="scores-open" title="Your computer and human Elo">CPU ${Math.round(ladder.ratings.computer).toLocaleString()} · Human ${Math.round(ladder.ratings.human).toLocaleString()}</button>`:'';
   const gamesPill=`<button class="pill" data-action="games">Games</button>`;
   const topAction=inMatch?matchReplay||computerPlayback?'':`<button class="pill" data-action="toggle-sheet" aria-label="Match details">Details</button>${gamesPill}`:hubOpen?'':`${eloPill}${gamesPill}`;
   const credit=`<p class="notice">${creditLine}<br><span class="build-number">${buildLine}</span><br><span class="perf">${timingLine()}</span></p>`;
@@ -590,14 +633,14 @@ function renderScores() {
   let entries=[];
   try { entries=readScoreTable(); } catch(error){scoreLinkError='This score table could not be read. Its saved data was kept.';console.error(error);}
   const ladder=ratingStandings();
-  const elo=ladder?`<section class="panel rating-panel"><div class="phase">Personal Elo · vs computer</div><h2>You · ${Math.round(ladder.ratings.human).toLocaleString()}</h2><p class="muted small">${ladder.records.human.wins} wins · ${ladder.records.human.losses} losses</p><div class="rating-opponents">${Object.entries(PERSONA_NAMES).map(([id,name])=>`<div><strong>${name}</strong><span>${Math.round(ladder.ratings[id]).toLocaleString()} · ${ladder.records[id].wins}W ${ladder.records[id].losses}L</span></div>`).join('')}</div><p class="muted small">Beat a commander to take rating from them; lose and they take yours. Repeated wins over the same foe earn less each time.</p></section>`:'';
+  const elo=ladder?`<section class="panel rating-panel"><div class="phase">Personal Elo</div><h2>Computer · ${Math.round(ladder.ratings.computer).toLocaleString()}</h2><p class="muted small">${ladder.records.computer.wins} wins · ${ladder.records.computer.losses} losses</p><div class="rating-opponents">${Object.entries(PERSONA_NAMES).map(([id,name])=>`<div><strong>${name}</strong><span>${Math.round(ladder.ratings[id]).toLocaleString()} · ${ladder.records[id].wins}W ${ladder.records[id].losses}L</span></div>`).join('')}</div><h2 style="margin-top:20px">Human · ${Math.round(ladder.ratings.human).toLocaleString()}</h2><p class="muted small">${ladder.records.human.wins} wins · ${ladder.records.human.losses} losses in 1v1 human matches. Each ladder transfers rating within its own pool, so repeated wins earn less.</p></section>`:'';
   ensureScoreLink();
   const slots=new Map(gameSlots().filter(s=>s.game.phase==='victory').map(s=>[s.game.matchId,s]));
   const rows=entries.filter(e=>e.layout===scoreLayout).map((e,i)=>{
     const saved=slots.get(e.id),replay=saved&&canReplay(saved.game);
     return `<section class="panel score-row"><div class="score-top"><strong>#${i+1} · ${e.score.toLocaleString()} points</strong><span>${scoreDate(e.date)}</span></div><p>${e.emoji} ${escapeHTML(e.name)} · ${PERSONA_NAMES[e.difficulty]} · ${e.turns} ${e.turns===1?'turn':'turns'}</p><p class="muted small">Match ${e.id.slice(0,8)}</p><div class="actions">${replay?`<button class="button secondary" data-action="replay-game" data-id="${saved.id}">Replay</button>`:`<span class="muted small">Replay unavailable${saved?'':' · restore the game backup'}</span>`}${saved?`<button class="button ghost" data-action="backup-slot" data-id="${saved.id}">Make game backup</button>`:''}</div>${saved&&backupForSlot===saved.id&&backupText?`<textarea readonly rows="3">${escapeHTML(backupText)}</textarea><button class="button secondary" data-action="copy-backup">Copy game link</button>`:''}</section>`;
   }).join('');
-  frame(`<section class="score-heading"><div class="phase">Personal records · solo 1v1</div><h1>High scores</h1><p>Victory earns 1,000 points, plus up to 1,000 for speed. Each extra commander turn costs 50 speed points. Serf ×1, Squire ×1.25, Knight ×1.5.</p></section>${scoreImportNotice?`<p class="status">${escapeHTML(scoreImportNotice)}</p>`:''}<div class="score-tabs"><button class="button ${scoreLayout==='expanded'?'':'secondary'}" data-action="score-layout" data-value="expanded">Expanded</button><button class="button ${scoreLayout==='classic'?'':'secondary'}" data-action="score-layout" data-value="classic">Classic</button></div>${ratingError?`<p class="status">${escapeHTML(ratingError)}</p>`:''}${elo}${rows||'<p class="muted">No solo 1v1 victories on this board yet.</p>'}<section class="panel"><h2>Keep your records</h2><p class="muted small">This link carries your scores and ratings, not the games themselves. Back up games separately if you want to replay them.</p>${scoreLinkError?`<p class="status">${escapeHTML(scoreLinkError)}</p>`:''}<div class="actions"><button class="button secondary" data-action="copy-scores" ${scoreLink?'':'disabled'}>Copy table link</button><button class="button secondary" data-action="share-scores" ${scoreLink?'':'disabled'}>Send table link</button></div><details><summary>Show score table link</summary><textarea readonly rows="3">${escapeHTML(scoreLink||'Preparing link…')}</textarea></details></section>${pastePanel()}`);
+  frame(`<section class="score-heading"><div class="phase">Personal records · solo 1v1</div><h1>High scores</h1><p>Victory earns 1,000 points, plus up to 1,000 for speed. Each extra commander turn costs 50 speed points. Serf ×1, Squire ×1.25, Knight ×1.5.</p></section>${scoreImportNotice?`<p class="status">${escapeHTML(scoreImportNotice)}</p>`:''}<div class="score-tabs"><button class="button ${scoreLayout==='expanded'?'':'secondary'}" data-action="score-layout" data-value="expanded">Expanded</button><button class="button ${scoreLayout==='classic'?'':'secondary'}" data-action="score-layout" data-value="classic">Classic</button></div>${ratingError?`<p class="status">${escapeHTML(ratingError)}</p>`:''}${elo}${leaderboardPanel()}${rows||'<p class="muted">No solo 1v1 victories on this board yet.</p>'}<section class="panel"><h2>Keep your records</h2><p class="muted small">This link carries your scores and ratings, not the games themselves. Back up games separately if you want to replay them.</p>${scoreLinkError?`<p class="status">${escapeHTML(scoreLinkError)}</p>`:''}<div class="actions"><button class="button secondary" data-action="copy-scores" ${scoreLink?'':'disabled'}>Copy table link</button><button class="button secondary" data-action="share-scores" ${scoreLink?'':'disabled'}>Send table link</button></div><details><summary>Show score table link</summary><textarea readonly rows="3">${escapeHTML(scoreLink||'Preparing link…')}</textarea></details></section>${pastePanel()}`);
 }
 function setTutorialStep(step) {
   tutorialStep=step;tutorialDice=null;
@@ -1281,8 +1324,8 @@ function renderVictory() {
   const groupChat=game.players.length>2;
   if(game.mode==='text')ensureTurnLink();
   const score=ScoreCodec.entryFromGame(game);
-  const rated=RatingCodec.fromGame(game),ladder=rated?ratingStandings():null,change=rated&&ladder?.changes[rated.id];
-  const ratingPanel=change?`<section class="panel"><h2>Your Elo · ${Math.round(change.after).toLocaleString()}</h2><p class="muted">${change.delta>=0?'+':''}${Math.round(change.delta)} against ${escapeHTML(player(1).name)}.</p><button class="button secondary wide" data-action="scores-open">See ratings & high scores</button></section>`:'';
+  const rated=RatingCodec.fromGame(game,game.mode==='text'?recallSeat(game.matchId):0),ladder=rated?ratingStandings():null,change=rated&&ladder?.changes[rated.id];
+  const ratingPanel=change?`<section class="panel"><h2>${change.ladder==='human'?'Human':'Computer'} Elo · ${Math.round(change.after).toLocaleString()}</h2><p class="muted">${change.delta>=0?'+':''}${Math.round(change.delta)} against ${change.ladder==='human'?'a rival kingdom':escapeHTML(player(1).name)}.</p><button class="button secondary wide" data-action="scores-open">See ratings & high scores</button></section>`:'';
   const scorePanel=score?`<section class="panel"><h2>${score.score.toLocaleString()} points</h2><p class="muted">${score.turns} commander ${score.turns===1?'turn':'turns'} against ${PERSONA_NAMES[score.difficulty]}.</p><button class="button secondary wide" data-action="scores-open">See high scores</button></section>`:'';
   const victoryHeadline=winner.name==='You'?'Your kingdom claims the crown.':`${escapeHTML(winner.name)} claims the crown.`;
   frame(`<section class="hero"><div class="crown">♛</div><div class="phase">The kingdom stands</div><h1>${victoryHeadline}</h1><p>${SUITS[winner.suit]} ${NAMES[winner.suit]} is the last kingdom standing.</p></section>${ratingPanel}${scorePanel}${canReplayLast()||canReplay(game)?`<section class="panel"><h2>Witness the campaign</h2><p class="muted small">${canReplay(game)?'Replay every turn with all cards face up.':'Watch the last clashes again.'}</p>${replayLastButton()}${canReplay(game)?`<button class="button wide" data-action="replay-game">Replay campaign</button>`:''}</section>`:''}${game.mode==='text'?`<section class="panel victory-dispatch"><h2>Seal thy victory</h2><p class="muted small">${groupChat?'Send the final dispatch to the group chat, so every kingdom can witness the crown claimed and replay the final clashes.':'Send the final dispatch to thy rival, so the crown’s claim is sealed.'}</p>${playerChips(game)}${turnLink?`<div class="actions"><button class="button" data-action="share-turn">${groupChat?'Send victory to group chat':`Send victory to ${escapeHTML(game.players.find(p=>p!==winner)?.name||'thy rival')}`}</button><button class="button secondary" data-action="copy-turn">Copy victory dispatch</button></div>`:'<p class="muted">Sealing the final dispatch…</p>'}</section>`:''}<section class="panel"><h2>Raise another banner?</h2><p class="muted small">Starting another game leaves this one in thy Games list.</p><button class="button secondary wide" data-action="new-after-win">Begin another war</button></section>`);
@@ -1820,7 +1863,7 @@ app.addEventListener('click', event => {
   if(action==='tutorial-roll'&&tutorialOpen){rollTutorial();return;}
   if(action==='tutorial-finish'&&tutorialOpen){closeTutorial();game=null;slotId=null;setupOpen=true;render();return;}
   if(action==='scores-open'){scoresOpen=true;tutorialOpen=false;hubOpen=false;render();return;}
-  if(action==='score-layout'){scoreLayout=button.dataset.value==='classic'?'classic':'expanded';render();return;}
+  if(action==='score-layout'){rememberLayout(button.dataset.value);render();return;}
   if(action==='copy-scores'&&scoreLink){navigator.clipboard?.writeText(scoreLink).catch(()=>{});return;}
   if(action==='share-scores'&&scoreLink){if(navigator.share)navigator.share({text:`My Regicidious high scores: ${scoreLink}`}).catch(()=>{});else navigator.clipboard?.writeText(scoreLink).catch(()=>{});return;}
   if(action==='restore-scores'&&incomingScores){
@@ -1981,7 +2024,7 @@ app.addEventListener('click', event => {
   if (action==='count') { draft.count=Number(button.dataset.value); render(); return; }
   if (action==='difficulty') { if(['serf','squire','knight'].includes(button.dataset.value))draft.difficulty=button.dataset.value; render(); return; }
   if (action==='mode') { draft.mode=button.dataset.value; render(); return; }
-  if (action==='layout') { draft.layout=button.dataset.value==='classic'?'classic':'expanded'; render(); return; }
+  if (action==='layout') { rememberLayout(button.dataset.value); render(); return; }
   if (action==='start') { rememberPlayerName(draft.names[0]);rememberPlayerEmoji(draft.emojis[0]);clearLinkError(); return commit(newGame); }
   if (action==='declare-war'&&game?.mode==='text'&&game.phase==='invite'&&textAccess()===0) return commit(()=>{game.phase='setup';game.view=0;});
   if(action==='claim-identity'&&needsFirstIdentity()){
@@ -1989,7 +2032,7 @@ app.addEventListener('click', event => {
     const name=(app.querySelector('[data-claim-name]')?.value??player(seat).name).trim().slice(0,24)||`Player ${seat+1}`;
     const proposed=app.querySelector('[data-claim-emoji]')?.value??player(seat).emoji;
     const emoji=EMOJIS.includes(proposed)?proposed:player(seat).emoji;
-    if(commit(()=>{player(seat).name=name;player(seat).emoji=emoji;game.view=seat;})){
+    if(commit(()=>{player(seat).name=name;player(seat).emoji=emoji;applyOwnRatings(game,seat);game.view=seat;})){
       if(game.mode==='text')persistSeat(game.matchId,seat);
       try{localStorage.setItem(identityKey(game.matchId,seat),'1');}catch{}
       rememberPlayerName(name);rememberPlayerEmoji(emoji);draft.names[0]=name;draft.emojis[0]=emoji;render();

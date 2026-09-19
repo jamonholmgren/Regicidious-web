@@ -131,6 +131,9 @@ const StateCodec = (() => {
     if(state.memory?.length){byte(0xb0);byte(state.memory.length);for(const m of state.memory){byte(m.player);byte(m.index|(m.row==='back'?128:0));card(m.id);number(m.round);}}
     if(state.players.some(p=>p.miner)){byte(0xb1);for(const p of state.players)card(p.miner);}
     if(state.first){byte(0xb2);byte(state.first);}
+    if(state.players.some(p=>Number.isFinite(p.humanElo)||Number.isFinite(p.computerElo))){
+      byte(0xb3);for(const p of state.players){number(Math.max(0,Math.round(p.humanElo??1000)));number(Math.max(0,Math.round(p.computerElo??1000)));}
+    }
     // Detect accidental truncation/corruption. This is not a security signature.
     let check=2166136261;
     for(const n of out)check=Math.imul(check^n,16777619)>>>0;
@@ -171,7 +174,7 @@ const StateCodec = (() => {
       const name=string(),flags=byte(),coins=number();
       const board=ranksPacked(boardCount,i),front=board.slice(0,lineLen),back=board.slice(lineLen);
       const reserve=ranksPacked(byte(),i),deck=ranksPacked(byte(),i);
-      return {name,suit:i,cpu:!!(flags&2),alive:!!(flags&1),persona:personas[flags>>2]||null,coins,front,back,reserve,deck,miner:null};
+      return {name,suit:i,cpu:!!(flags&2),alive:!!(flags&1),persona:personas[flags>>2]||null,coins,front,back,reserve,deck,miner:null,humanElo:null,computerElo:null};
     });
     let pending=null;
     if(byte()) {
@@ -223,6 +226,7 @@ const StateCodec = (() => {
       if(mag===0xb0){const n=byte();if(n>24)throw Error('Invalid memory');memory=Array.from({length:n},()=>{const owner=byte(),slot=byte(),id=card(),seen=number();return {player:owner,row:slot&128?'back':'front',index:slot&127,id,round:seen};});continue;}
       if(mag===0xb1){for(const p of players)p.miner=card();continue;}
       if(mag===0xb2){first=byte();continue;}
+      if(mag===0xb3){for(const p of players){p.humanElo=number();p.computerElo=number();}continue;}
       if(mag!==0xa8)throw Error('Unknown match extension');
       const originTurn=byte(),originSetup=byte(),originPhase=phases[byte()],originView=byte(),originRound=number();
       if(!originPhase)throw Error('Invalid history origin');
