@@ -55,7 +55,7 @@ try { tutorialOpen=localStorage.getItem('regicidious.tutorial.open')==='1';tutor
 const milliseconds=n=>`${n.toFixed(2)} ms`;
 const timingLine=()=>timings.render===null?'':`Last move: logic ${milliseconds(timings.logic)} · save ${milliseconds(timings.save)} · render ${milliseconds(timings.render)}`;
 const creditLine='Original game by Shane Holmgren<br>Digital adaptation by Jamon Holmgren, <a href="https://jammin.games/" target="_blank" rel="noopener noreferrer">Jammin Games</a>';
-const BUILD=41;
+const BUILD=42;
 const buildLine=BUILD>0?`Build ${BUILD}`:'Build local';
 
 try {
@@ -286,15 +286,27 @@ async function prepareBackupFor(saved,id) {
 }
 function battleSentence(saved,e) {
   const actor=saved.players[e.actor].name,defender=saved.players[e.defender].name;
-  if(e.result==='tie')return `${actor}’s ${cardTitle(e.attackCard)} and ${defender}’s ${cardTitle(e.defendCard)} fought to a draw!`;
+  if(e.result==='tie')return `${actor}’s ${cardTitle(e.attackCard)} clashed with ${defender}’s ${cardTitle(e.defendCard)}, but neither yielded.`;
   if(e.sacrifice){const owner=e.result==='attack'?e.defender:e.actor;const board=e.result==='attack'?e.beforeDefender:e.beforeActor;const fl=board.length>>1;const id=board[(e.sacrifice.row==='back'?fl:0)+e.sacrifice.index];return royalSacrificeSentence(saved.players[owner].name,e.result==='attack'?e.defendCard:e.attackCard,id);}
-  if(e.result==='defend')return `${defender}’s ${cardTitle(e.defendCard)} defended itself and slew ${actor}’s ${cardTitle(e.attackCard)}.`;
-  return `${actor}’s ${cardTitle(e.attackCard)} defeated ${defender}’s ${cardTitle(e.defendCard)}!`;
+  if(e.result==='defend')return `${defender}’s ${cardTitle(e.defendCard)} held the line and felled ${actor}’s ${cardTitle(e.attackCard)}.`;
+  return `${actor}’s ${cardTitle(e.attackCard)} cut down ${defender}’s ${cardTitle(e.defendCard)}.`;
 }
 function lastBattleSentence(saved) {
   const events=saved.lastBattles||[];
   if(!events.length)return 'The last turn ended without a battle.';
-  return events.map((e,i)=>`${i?'Meanwhile, ':''}${battleSentence(saved,e)}`).join(' ');
+  if(events.length===2){
+    const [first,second]=events;
+    if(first.result==='defend'&&second.result==='attack'&&first.defender===second.defender&&first.defendCard===second.defendCard){
+      const defender=saved.players[first.defender].name;
+      const victor=saved.players[second.actor].name;
+      const fallen=saved.players[first.actor].name;
+      return `${defender}’s valiant ${cardTitle(first.defendCard).toLowerCase()} was overwhelmed by ${victor}’s ${cardTitle(second.attackCard)}, but managed to take down ${fallen}’s ${cardTitle(first.attackCard)}.`;
+    }
+    const bridges=['Elsewhere on the field,','On another flank,','Amid the turmoil,','Before the dust settled,'];
+    const bridge=bridges[(saved.turnNumber+first.actor+second.defender)%bridges.length];
+    return `${battleSentence(saved,first)} ${bridge} ${battleSentence(saved,second)}`;
+  }
+  return battleSentence(saved,events[0]);
 }
 function restoreNoticeText(saved,viewer=saved.turn) {
   return (saved.restoreNotices||[]).filter(alert=>alert.seat!==viewer).map(alert=>
