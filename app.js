@@ -65,7 +65,7 @@ try { tutorialOpen=localStorage.getItem('regicidious.tutorial.open')==='1';tutor
 const milliseconds=n=>`${n.toFixed(2)} ms`;
 const timingLine=()=>timings.render===null?'':`Last move: logic ${milliseconds(timings.logic)} · save ${milliseconds(timings.save)} · render ${milliseconds(timings.render)}`;
 const creditLine='Original game by Shane Holmgren<br>Digital adaptation by Jamon Holmgren, <a href="https://jammin.games/" target="_blank" rel="noopener noreferrer">Jammin Games</a>';
-const BUILD=52;
+const BUILD=53;
 const buildLine=BUILD>0?`Build ${BUILD}`:'Build local';
 
 try {
@@ -588,10 +588,10 @@ function syncGameHash(){
 }
 function frame(content,compact=false) {
   const inMatch=!!game&&!hubOpen&&!incomingBackup&&!incomingScores&&!tutorialOpen&&!scoresOpen;
-  const ladder=!inMatch&&!hubOpen?ratingStandings():null;
+  const ladder=!inMatch?ratingStandings():null;
   const eloPill=ladder?`<button class="pill" data-action="scores-open" title="Your computer and human Elo">CPU ${Math.round(ladder.ratings.computer).toLocaleString()} · Human ${Math.round(ladder.ratings.human).toLocaleString()}</button>`:'';
-  const gamesPill=`<button class="pill" data-action="games">Games</button>`;
-  const topAction=inMatch?matchReplay||computerPlayback?'':`<button class="pill" data-action="toggle-sheet" aria-label="Match details">Details</button>${gamesPill}`:hubOpen?'':`${eloPill}${gamesPill}`;
+  const gamesPill=`<button class="pill${hubOpen?' selected-pill':''}" data-action="games">Games</button>`;
+  const topAction=inMatch?matchReplay||computerPlayback?'':`<button class="pill" data-action="toggle-sheet" aria-label="Match details">Details</button>${gamesPill}`:`${eloPill}${gamesPill}`;
   const credit=`<p class="notice">${creditLine}<br><span class="build-number">${buildLine}</span><br><span class="perf">${timingLine()}</span></p>`;
   app.innerHTML = `<main class="app ${compact?'compact-app':''}"><header class="top ${compact?'compact-top':''}"><button type="button" class="brand" data-action="reload" aria-label="Reload Regicidious" title="Reload page">♛ Regicidious</button><div class="top-actions">${topAction}</div></header>${storageError?`<div class="status" role="alert">${storageError}</div>`:''}${backupError?`<div class="status" role="alert">${backupError}</div>`:''}${content}${!compact&&!game&&!hubOpen&&!incomingBackup&&!incomingScores&&!scoresOpen&&!tutorialOpen?pastePanel():''}${!compact&&inMatch?arenaDetails():''}${compact?'':credit}</main>`;
   syncGameHash();
@@ -1960,7 +1960,7 @@ app.addEventListener('click', event => {
       game=saved;slotId=id;hubOpen=false;scoresOpen=false;completedOpen=false;sheetOpen=false;reserveOpen=false;backupText='';
       localStorage.setItem(ACTIVE_KEY,slotId);storageError='';clearLinkError();
       if(!startMatchReplay(saved))throw Error('No frames');
-    } catch(error) { storageError='This finished game cannot be replayed.';render();console.error(error); }
+    } catch(error) { backupError='This finished game cannot be replayed.';render();console.error(error); }
     return;
   }
   if(action==='open-game') {
