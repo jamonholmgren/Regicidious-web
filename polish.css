@@ -24,12 +24,14 @@ body{min-height:100dvh;overflow-x:hidden;overscroll-behavior:none}
 .game-tile{display:flex;flex-direction:column;justify-content:space-between;gap:8px;min-width:0;aspect-ratio:1;padding:12px;border:1px solid #78907b;border-radius:17px;background:#1c3b32;color:#f7f0dd;text-align:left;box-shadow:0 8px 22px #081a1633}
 .game-tile.game-ready{border-color:#dfbc7a;box-shadow:0 0 0 1px #d3ad6940,0 8px 22px #081a1640}
 .game-tile.game-waiting{opacity:.54}
+.game-tile.game-fallen{border-style:dashed;opacity:.48;box-shadow:none}
 .game-tile:focus-visible{outline:3px solid #e9be74;outline-offset:2px}
 .tile-roster{display:flex;flex-direction:column;gap:3px;min-width:0;overflow:hidden}
 .tile-player{display:flex;align-items:center;gap:5px;min-width:0;font-size:clamp(.72rem,3.1vw,.94rem);line-height:1.16}
 .tile-emoji{flex:0 0 auto;font-size:1.03em}
 .tile-name{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tile-player.tile-current{color:#f19a8a;font-weight:800}
+.tile-player.tile-fallen{opacity:.42;filter:grayscale(1);text-decoration:line-through;text-decoration-color:#c2906b;text-decoration-thickness:1px}
 .tile-last{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.7rem;color:#b9ccbd}
 .game-new{align-items:center;justify-content:center;text-align:center;border-style:dashed;color:#f4d797;background:#1a392f}
 .game-new span{font-size:3rem;line-height:.95;font-weight:300}

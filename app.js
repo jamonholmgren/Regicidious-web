@@ -55,7 +55,7 @@ try { tutorialOpen=localStorage.getItem('regicidious.tutorial.open')==='1';tutor
 const milliseconds=n=>`${n.toFixed(2)} ms`;
 const timingLine=()=>timings.render===null?'':`Last move: logic ${milliseconds(timings.logic)} · save ${milliseconds(timings.save)} · render ${milliseconds(timings.render)}`;
 const creditLine='Original game by Shane Holmgren<br>Digital adaptation by Jamon Holmgren, <a href="https://jammin.games/" target="_blank" rel="noopener noreferrer">Jammin Games</a>';
-const BUILD=43;
+const BUILD=44;
 const buildLine=BUILD>0?`Build ${BUILD}`:'Build local';
 
 try {
@@ -542,10 +542,12 @@ function compactAge(time){
 }
 function slotCard({id,game:g,dates}, finished) {
   const current=g.phase==='setup'?g.setup:g.turn;
-  const roster=g.players.map((p,i)=>`<span class="tile-player${!finished&&i===current?' tile-current':''}"><span class="tile-emoji">${escapeHTML(p.emoji)}</span><span class="tile-name">${escapeHTML(shortTileName(p.name,g.players.length))}</span></span>`).join('');
+  const ownSeat=g.mode==='text'?Number(recallSeat(g.matchId)??-1):0;
+  const ownKingdomFallen=!finished&&ownSeat>=0&&!g.players[ownSeat]?.alive;
+  const roster=g.players.map((p,i)=>`<span class="tile-player${!p.alive?' tile-fallen':''}${!finished&&i===current?' tile-current':''}"><span class="tile-emoji">${escapeHTML(p.emoji)}</span><span class="tile-name">${escapeHTML(shortTileName(p.name,g.players.length))}</span></span>`).join('');
   const full=g.players.map(p=>`${p.emoji} ${p.name}`).join(' versus ');
   const age=compactAge(dates.last),status=finished?'finished':slotIsMine(g)?'game-ready':'game-waiting';
-  return `<button type="button" class="game-tile ${status}" data-action="open-game" data-id="${escapeHTML(id)}" aria-label="${escapeHTML(full)}. ${finished?'Finished match.':'Current turn: '+g.players[current].name+'.'} Last move ${escapeHTML(relativeText(dates.last)||'not recorded')}." title="${escapeHTML(full)}"><span class="tile-roster">${roster}</span><span class="tile-last">${finished?'Finished · ':'Last move · '}${escapeHTML(age)}</span></button>`;
+  return `<button type="button" class="game-tile ${status}${ownKingdomFallen?' game-fallen':''}" data-action="open-game" data-id="${escapeHTML(id)}" aria-label="${escapeHTML(full)}. ${ownKingdomFallen?'Your kingdom has fallen. ':''}${finished?'Finished match.':'Current turn: '+g.players[current].name+'.'} Last move ${escapeHTML(relativeText(dates.last)||'not recorded')}." title="${escapeHTML(full)}"><span class="tile-roster">${roster}</span><span class="tile-last">${finished?'Finished · ':'Last move · '}${escapeHTML(age)}</span></button>`;
 }
 function renderHub() {
   const slots=gameSlots();
