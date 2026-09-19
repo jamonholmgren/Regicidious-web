@@ -55,7 +55,7 @@ try { tutorialOpen=localStorage.getItem('regicidious.tutorial.open')==='1';tutor
 const milliseconds=n=>`${n.toFixed(2)} ms`;
 const timingLine=()=>timings.render===null?'':`Last move: logic ${milliseconds(timings.logic)} · save ${milliseconds(timings.save)} · render ${milliseconds(timings.render)}`;
 const creditLine='Original game by Shane Holmgren<br>Digital adaptation by Jamon Holmgren, <a href="https://jammin.games/" target="_blank" rel="noopener noreferrer">Jammin Games</a>';
-const BUILD=45;
+const BUILD=46;
 const buildLine=BUILD>0?`Build ${BUILD}`:'Build local';
 
 try {
@@ -694,7 +694,7 @@ function renderFirstIdentity(){
 }
 function renderVeil() {
   const index = game.phase === 'setup' ? game.setup : game.phase === 'refill' ? game.refill[game.refillIndex] : game.phase === 'queen' ? game.pending.defender : game.turn;
-  const text = game.phase === 'setup' ? 'M’lord, our enemies are at the gates. We must prepare for war!' : game.phase === 'refill' ? 'Fill any front-line gaps in private.' : game.phase === 'queen' ? 'Your Queen sacrifices the weakest adjacent peasant.' : 'Your kingdom is waiting.';
+  const text = game.phase === 'setup' ? 'M’lord, our enemies are at the gates. We must prepare for war!' : game.phase === 'refill' ? 'Mend breaches in thy shield wall, beyond prying eyes.' : game.phase === 'queen' ? 'Thy Queen is shielded by the humblest nearby guard.' : 'Thy kingdom awaits the next dispatch.';
   const solo=game.mode==='solo';
   frame(`<section class="veil"><div><div class="crown">${player(index).emoji}</div><div class="phase">${solo?'Your kingdom':'Pass the phone'}</div><h1>${escapeHTML(player(index).name)}</h1><p>${text}${solo?'':'<br>Make sure only this player can see the screen.'}</p><div class="actions"><button class="button wide" data-action="reveal">${game.phase==='setup'?'Set up battle lines →':solo?'Continue →':`I’m ${escapeHTML(player(index).name)} — reveal`}</button></div></div></section>`);
 }
@@ -738,7 +738,7 @@ function arenaDetails() {
   const notice=game.mode==='text'?restoreNoticeText(game,textAccess()):'';
   const backup=`<p class="small muted">Back up this match before removing it if you may want to restore it later.</p><button class="button secondary wide" data-action="backup">Make Backup</button>${backupForSlot===slotId&&backupText?`<textarea readonly rows="3">${escapeHTML(backupText)}</textarea><button class="button secondary" data-action="copy-backup">Copy backup link</button>`:''}`;
   const dates=slotId?readDates(slotId):{started:0,last:0};
-  return `<div class="sheet-scrim" data-action="toggle-sheet"></div><section class="arena-sheet" role="dialog" aria-label="Game details"><div class="row"><h3>Match details</h3><button class="button ghost" data-action="toggle-sheet">Close</button></div><p class="muted small">Round ${game.round} · ${escapeHTML(player(game.turn).name)} · ${escapeHTML(game.phase)}</p><p class="muted small">Started ${escapeHTML(dateText(dates.started||game.startedAt))}<br>Last move ${escapeHTML(dateText(dates.last))}${dates.last?` · ${escapeHTML(relativeText(dates.last))}`:''}</p>${notice?`<p class="status">${escapeHTML(notice)}</p>`:''}<p class="small">${escapeHTML(game.message||'Tap a card to select it. The highest individual die wins.')}</p>${game.log?.length?`<div class="small muted">${game.log.slice(-6).reverse().map(item=>`<p>${escapeHTML(item)}</p>`).join('')}</div>`:''}${share}${backup}<div class="details-actions"><button class="button secondary wide" data-action="games">All games</button><button class="button ${deleteCandidate===slotId?'danger':'ghost'} wide" data-action="delete-game" data-id="${escapeHTML(slotId)}">${deleteCandidate===slotId?'Confirm delete':'Delete from this device'}</button></div><p class="small muted">${creditLine}</p>${timings.render===null?'':`<p class="small muted perf">${timingLine()}</p>`}</section>`;
+  return `<div class="sheet-scrim" data-action="toggle-sheet"></div><section class="arena-sheet" role="dialog" aria-label="Game details"><div class="row"><h3>War council</h3><button class="button ghost" data-action="toggle-sheet">Close</button></div><p class="muted small">Round ${game.round} · ${escapeHTML(player(game.turn).name)} · ${escapeHTML(game.phase)}</p><p class="muted small">Started ${escapeHTML(dateText(dates.started||game.startedAt))}<br>Last move ${escapeHTML(dateText(dates.last))}${dates.last?` · ${escapeHTML(relativeText(dates.last))}`:''}</p>${notice?`<p class="status">${escapeHTML(notice)}</p>`:''}<p class="small">${escapeHTML(game.message||'Choose thy champion, then a foe. The highest single die carries the clash.')}</p>${game.log?.length?`<div class="small muted">${game.log.slice(-6).reverse().map(item=>`<p>${escapeHTML(item)}</p>`).join('')}</div>`:''}${share}${backup}<div class="details-actions"><button class="button secondary wide" data-action="games">All games</button><button class="button ${deleteCandidate===slotId?'danger':'ghost'} wide" data-action="delete-game" data-id="${escapeHTML(slotId)}">${deleteCandidate===slotId?'Confirm delete':'Delete from this device'}</button></div><p class="small muted">${creditLine}</p>${timings.render===null?'':`<p class="small muted perf">${timingLine()}</p>`}</section>`;
 }
 function arenaReserve(owner, visual) {
   const p=player(owner);
@@ -785,8 +785,8 @@ function renderPlay() {
     controls = `<button class="button secondary wide" data-action="finish-attacks">${retreatArmed===retreatKey()?'Confirm end attacks':game.attacks?'Sound the retreat':'Hold the line'} →</button>`;
   } else {
     const jack = hasCard(p,'J') ? 1 : 0;
-    intro = `${game.kills} defeated ${game.kills===1?'card':'cards'} + ${jack} Jack bonus = ${game.kills+jack} ${game.kills+jack===1?'coin':'coins'}.`;
-    controls = `<button class="button wide" data-action="income">Collect ${game.kills+jack} ◉ and end turn →</button>`;
+    intro = `Spoils of war: ${game.kills} fallen ${game.kills===1?'champion':'champions'}${jack?' + 1 Jack’s levy':''} = ${game.kills+jack} ${game.kills+jack===1?'coin':'coins'}.`;
+    controls = `<button class="button wide" data-action="income">Claim ${game.kills+jack} ◉ and yield the turn →</button>`;
   }
   renderArena(game.turn,game.phase,intro,controls);
 }
@@ -795,7 +795,7 @@ function clearRetreat(){retreatArmed=null;clearTimeout(retreatTimer);}
 function renderRefill() {
   const index = game.refill[game.refillIndex], p = player(index);
   const gaps = p.front.filter(id => !id).length;
-  renderArena(index,'refill',gaps?`The vanguard has ${Math.min(gaps,p.back.filter(Boolean).length)} gap${Math.min(gaps,p.back.filter(Boolean).length)===1?'':'s'}: tap a rear card, then an empty vanguard place.`:'The vanguard stands formed. Tap a newly moved card, then its old rear place to undo.',`<button class="button wide" data-action="refill-done" ${gaps && p.back.some(Boolean)?'disabled':''}>${gaps?'Close the vanguard gaps first':'Confirm the vanguard →'}</button>`);
+  renderArena(index,'refill',gaps?`The shield wall has ${Math.min(gaps,p.back.filter(Boolean).length)} breach${Math.min(gaps,p.back.filter(Boolean).length)===1?'':'es'}: send a rear champion forward to stand in it.`:'The vanguard stands whole. Tap a newly moved champion, then their old rear place to undo.',`<button class="button wide" data-action="refill-done" ${gaps && p.back.some(Boolean)?'disabled':''}>${gaps?'Mend the shield wall first':'Confirm the shield wall →'}</button>`);
 }
 function adjacentPeasants(p, row, index) {
   const cols=p[row]?.length||3;
@@ -1051,16 +1051,16 @@ function buildMatchReplay(saved) {
         push(`${actor} shows ${article(attackTitle)} ${attackTitle}!`,{owner:b.defender,visual:battleVisual('reveal',source,target,attacker)});
         push(`${actor}’s ${cardTitle(b.attackCard)} attacks ${opponent}’s ${cardTitle(b.defendCard)}!`,{owner:b.defender,visual:battleVisual('target',source,target,attacker)});
         push('The dice tumble…',{owner:b.defender,visual:battleVisual('roll',source,target,attacker)});
-        let loser=null,winner=null,narration='A draw! Both cards survive.';
+        let loser=null,winner=null,narration='The clash is drawn; both champions endure.';
         if(b.result==='attack'){
           const sacrifice=b.sacrifice.length?weakestSacrifice(b):-1;
           loser=sacrifice>=0?{owner:b.defender,row:b.sacrifice[sacrifice].row,index:b.sacrifice[sacrifice].index}:target;
           winner=source;
-          narration=sacrifice>=0?royalSacrificeSentence(opponent,b.defendCard,b.sacrifice[sacrifice].id):`${actor} defeats ${opponent}’s ${cardTitle(b.defendCard)}!`;
+          narration=sacrifice>=0?royalSacrificeSentence(opponent,b.defendCard,b.sacrifice[sacrifice].id):`${actor}’s ${cardTitle(b.attackCard)} strikes down ${opponent}’s ${cardTitle(b.defendCard)}.`;
         } else if(b.result==='defend'){
           const sacrifice=b.sacrifice.length?b.sacrifice[weakestSacrifice(b)]:null;
           loser=sacrifice?{owner:attacker,row:sacrifice.row,index:sacrifice.index}:source;winner=target;
-          narration=sacrifice?royalSacrificeSentence(actor,b.attackCard,sacrifice.id):`${opponent}’s ${cardTitle(b.defendCard)} defeats ${actor}’s ${cardTitle(b.attackCard)}!`;
+          narration=sacrifice?royalSacrificeSentence(actor,b.attackCard,sacrifice.id):`${opponent}’s ${cardTitle(b.defendCard)} strikes down ${actor}’s ${cardTitle(b.attackCard)}.`;
         }
         const resultVisual=battleVisual('result',source,target,attacker);
         resultVisual.loser=loser;resultVisual.winner=winner;
@@ -1071,34 +1071,34 @@ function buildMatchReplay(saved) {
         const owner=Number(event.card.split('-')[0]);
         const name=player(Number.isInteger(owner)?owner:game.turn).name;
         applyHistoryEvent(event);
-        push(`${name} buys ${cardTitle(event.card)}.`);
+        push(`${name} levies ${cardTitle(event.card)} to the banners.`);
         continue;
       }
       if(event.t==='income'){
         const name=player(game.turn).name,n=game.kills+(hasCard(player(game.turn),'J')?1:0);
         applyHistoryEvent(event);
-        push(`${name} collects ${n} ${n===1?'coin':'coins'}. ${game.phase==='victory'?`${player(living()[0]).name} wins.`:`${player(game.turn).name}’s turn.`}`);
+        push(`${name} claims ${n} ${n===1?'coin':'coins'} in spoils. ${game.phase==='victory'?`${player(living()[0]).name} claims the crown.`:`The command passes to ${player(game.turn).name}.`}`);
         continue;
       }
       applyHistoryEvent(event);
       if(event.t==='swap'){
         const id=player(event.owner)[event.to.location]?.[event.to.index];
-        push(`${player(event.owner).name} moves ${id?cardTitle(id):'a card'}.`);
+        push(`${player(event.owner).name} shifts ${id?cardTitle(id):'a champion'} in the line.`);
       } else if(event.t==='setupDone'){
         if(saved.history.events[eventIndex-1]?.t!=='arrangeSet'){
           const who=game.phase==='arrange'?(game.mode==='solo'?0:game.players.length-1):game.setup-1;
-          push(`${player(Math.max(0,who)).name} locks a formation.`);
+          push(`${player(Math.max(0,who)).name} sets the battle line.`);
         }
       }
-      else if(event.t==='phase'&&event.phase==='arrange') push(`${player(game.turn).name} rearranges the line.`);
-      else if(event.t==='phase'&&event.phase==='attack') push(`${player(game.turn).name} prepares to attack.`);
-      else if(event.t==='resolve') push(game.phase==='victory'?`${player(living()[0]).name} wins.`:(game.message||'The clash is over.'));
-      else if(event.t==='finish') push(game.phase==='refill'?'Front lines need filling.':'Attacks are over.');
-      else if(event.t==='refillDone'&&saved.history.events[eventIndex-1]?.t!=='arrangeSet') push('The front line is confirmed.');
-      else if(event.t==='arrangeSet') push(`${player(event.owner).name} sets a formation.`);
-      else if(event.t==='sync') push('The kingdoms update the field.');
+      else if(event.t==='phase'&&event.phase==='arrange') push(`${player(game.turn).name} readies the battle line.`);
+      else if(event.t==='phase'&&event.phase==='attack') push(`${player(game.turn).name} calls the charge.`);
+      else if(event.t==='resolve') push(game.phase==='victory'?`${player(living()[0]).name} claims the crown.`:(game.message||'The clash is settled.'));
+      else if(event.t==='finish') push(game.phase==='refill'?'The vanguard must be made whole.':'The charge is spent.');
+      else if(event.t==='refillDone'&&saved.history.events[eventIndex-1]?.t!=='arrangeSet') push('The vanguard is made whole.');
+      else if(event.t==='arrangeSet') push(`${player(event.owner).name} sets the battle line.`);
+      else if(event.t==='sync') push('A royal dispatch refreshes the field.');
     }
-    if(game.phase==='victory'&&frames.at(-1)?.phase!=='victory') push(`${player(living()[0]).name} wins.`);
+    if(game.phase==='victory'&&frames.at(-1)?.phase!=='victory') push(`${player(living()[0]).name} claims the crown.`);
   } finally { game=prev; historyLock=lock; }
   return frames;
 }
@@ -1159,7 +1159,7 @@ function renderMatchReplay() {
 }
 function renderQueen() {
   const b = game.pending, owner=b.result==='attack'?b.defender:game.turn;
-  frame(`<section class="panel"><h2>A royal sacrifice</h2><p class="muted">${escapeHTML(player(owner).name)}’s ${cardTitle(b.result==='attack'?b.defendCard:b.attackCard)} is shielded by the weakest adjacent peasant.</p><button class="button wide" data-action="sacrifice">Continue →</button></section>`);
+  frame(`<section class="panel"><h2>A royal sacrifice</h2><p class="muted">${escapeHTML(player(owner).name)}’s ${cardTitle(b.result==='attack'?b.defendCard:b.attackCard)} is shielded as the nearest humble guard gives their life in the royal’s stead.</p><button class="button wide" data-action="sacrifice">Witness it →</button></section>`);
 }
 function renderVictory() {
   const winner = player(living()[0]);
@@ -1168,7 +1168,8 @@ function renderVictory() {
   const rated=RatingCodec.fromGame(game),ladder=rated?ratingStandings():null,change=rated&&ladder?.changes[rated.id];
   const ratingPanel=change?`<section class="panel"><h2>Your Elo · ${Math.round(change.after).toLocaleString()}</h2><p class="muted">${change.delta>=0?'+':''}${Math.round(change.delta)} against ${escapeHTML(player(1).name)}.</p><button class="button secondary wide" data-action="scores-open">See ratings & high scores</button></section>`:'';
   const scorePanel=score?`<section class="panel"><h2>${score.score.toLocaleString()} points</h2><p class="muted">${score.turns} commander ${score.turns===1?'turn':'turns'} against ${PERSONA_NAMES[score.difficulty]}.</p><button class="button secondary wide" data-action="scores-open">See high scores</button></section>`:'';
-  frame(`<section class="hero"><div class="crown">♛</div><div class="phase">The kingdom stands</div><h1>${escapeHTML(winner.name)} wins.</h1><p>${SUITS[winner.suit]} ${NAMES[winner.suit]} is the last kingdom standing.</p></section>${ratingPanel}${scorePanel}${canReplayLast()||canReplay(game)?`<section class="panel"><h2>Watch it again</h2><p class="muted small">${canReplay(game)?'Replay every turn with all cards face up.':'Watch the last fights again.'}</p>${replayLastButton()}${canReplay(game)?`<button class="button wide" data-action="replay-game">Replay game</button>`:''}</section>`:''}${game.mode==='text'?`<section class="panel"><h2>Tell the group</h2>${turnLink?`<div class="actions"><button class="button" data-action="copy-turn">Copy result</button><button class="button secondary" data-action="share-turn">Send result to group</button></div>`:'<p class="muted">Preparing result link…</p>'}</section>`:''}<section class="panel"><h2>Another game?</h2><p class="muted small">Starting another game leaves this one in your Games list.</p><button class="button secondary wide" data-action="new-after-win">New game</button></section>`);
+  const victoryHeadline=winner.name==='You'?'You claim the crown.':`${escapeHTML(winner.name)} claims the crown.`;
+  frame(`<section class="hero"><div class="crown">♛</div><div class="phase">The kingdom stands</div><h1>${victoryHeadline}</h1><p>${SUITS[winner.suit]} ${NAMES[winner.suit]} is the last kingdom standing.</p></section>${ratingPanel}${scorePanel}${canReplayLast()||canReplay(game)?`<section class="panel"><h2>Witness the campaign</h2><p class="muted small">${canReplay(game)?'Replay every turn with all cards face up.':'Watch the last clashes again.'}</p>${replayLastButton()}${canReplay(game)?`<button class="button wide" data-action="replay-game">Replay campaign</button>`:''}</section>`:''}${game.mode==='text'?`<section class="panel"><h2>Tell the war council</h2>${turnLink?`<div class="actions"><button class="button" data-action="copy-turn">Copy dispatch</button><button class="button secondary" data-action="share-turn">Send result to group</button></div>`:'<p class="muted">Sealing the final dispatch…</p>'}</section>`:''}<section class="panel"><h2>Raise another banner?</h2><p class="muted small">Starting another game leaves this one in thy Games list.</p><button class="button secondary wide" data-action="new-after-win">Begin another war</button></section>`);
 }
 function renderStalemate() {
   frame(`<section class="hero"><div class="crown">♛</div><h1>No winner yet.</h1><p>The computer could not bring this war to an end. The match is saved in your Games list.</p></section><section class="panel"><button class="button secondary wide" data-action="new-game">Start another game</button></section>`);
@@ -1284,7 +1285,7 @@ function resolveBattle() {
   const sacrificeIndex=b.sacrifice.length?weakestSacrifice(b):-1;
   const defeated=b.result==='attack' ? sacrificeIndex>=0?b.sacrifice[sacrificeIndex].id:b.defendCard : b.result==='defend'?sacrificeIndex>=0?b.sacrifice[sacrificeIndex].id:b.attackCard:null;
   game.log ??=[];
-  game.log.push(`${player(game.turn).name} ${label(b.attackCard)} [${b.attackDice.join(',')}] vs ${player(b.defender).name} ${label(b.defendCard)} [${b.defendDice.join(',')}]: ${defeated?`${b.result==='attack'?label(b.attackCard):label(b.defendCard)} defeated ${label(defeated)}`:'draw'}.`);
+  game.log.push(`${player(game.turn).name} ${label(b.attackCard)} [${b.attackDice.join(',')}] vs ${player(b.defender).name} ${label(b.defendCard)} [${b.defendDice.join(',')}]: ${defeated?`${b.result==='attack'?label(b.attackCard):label(b.defendCard)} struck down ${label(defeated)}`:'the clash was drawn'}.`);
   if (game.log.length>24) game.log.shift();
   if (b.result==='attack') {
     if (sacrificeIndex>=0) { const slot=b.sacrifice[sacrificeIndex]; defeat(b.defender,slot.row,slot.index); }
