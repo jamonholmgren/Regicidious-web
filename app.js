@@ -48,6 +48,7 @@ function rememberLayout(layout){
 let timings = {logic:null,save:null,render:null};
 let backupText='',incomingBackup=null,incomingKind=null,incomingSeat=null,backupError='',linkLoading=false,dispatchNotice=null;
 let selectedOpponent=null,sheetOpen=false,reserveOpen=false;
+let opponentContext='';
 let computerRecording=null,computerPlayback=null,replayTimer=null;
 let historyLock=false,matchReplay=null,matchReplayTimer=null,matchHoldTimer=null;
 let backupForSlot=null,deleteCandidate=null,hubNotice='';
@@ -65,7 +66,7 @@ try { tutorialOpen=localStorage.getItem('regicidious.tutorial.open')==='1';tutor
 const milliseconds=n=>`${n.toFixed(2)} ms`;
 const timingLine=()=>timings.render===null?'':`Last move: logic ${milliseconds(timings.logic)} · save ${milliseconds(timings.save)} · render ${milliseconds(timings.render)}`;
 const creditLine='Original game by Shane Holmgren<br>Digital adaptation by Jamon Holmgren, <a href="https://jammin.games/" target="_blank" rel="noopener noreferrer">Jammin Games</a>';
-const BUILD=57;
+const BUILD=58;
 const buildLine=BUILD>0?`Build ${BUILD}`:'Build local';
 
 try {
@@ -821,11 +822,15 @@ function arenaReserve(owner, visual) {
 }
 function renderArena(owner,mode,intro,controls,visual) {
   const candidates=living().filter(i=>i!==owner);
-  const opponent=visual?.opponent??(mode==='battle'&&game.pending?.defender!==owner?game.pending.defender:(candidates.includes(selectedOpponent)?selectedOpponent:candidates[0]));
-  selectedOpponent=opponent;
+  if(!visual){
+    const context=`${game.matchId}:${game.round}:${game.turn}:${owner}`;
+    if(context!==opponentContext){selectedOpponent=null;opponentContext=context;}
+  }
+  const opponent=visual?.opponent??(mode==='battle'&&game.pending?.defender!==owner?game.pending.defender:(candidates.includes(selectedOpponent)?selectedOpponent:candidates.length===1?candidates[0]:null));
+  if(!visual)selectedOpponent=opponent;
   const target=opponent==null?null:player(opponent);
   const chooseOpponent=!visual||visual.revealAll&&!visual.source&&visual.opponent==null;
-  const heading=`<strong>${target?`${target.emoji} ${escapeHTML(target.name)} ${SUITS[opponent]}`:'Your opponent'}</strong>`;
+  const heading=`<strong>${target?`${target.emoji} ${escapeHTML(target.name)} ${SUITS[opponent]}`:''}</strong>`;
   const chips=chooseOpponent&&candidates.length>1?`<div class="opponent-chips" aria-label="Choose an opponent">${candidates.map(i=>`<button class="opponent-chip${i===opponent?' active':''}" data-action="opponent" data-index="${i}" aria-label="View ${escapeHTML(player(i).name)}" aria-pressed="${i===opponent}"><span class="chip-emoji">${player(i).emoji}</span><span class="chip-name">${escapeHTML(player(i).name)}</span></button>`).join('')}</div>`:'';
   const prepareHint=(mode==='buy'||mode==='arrange')&&!visual?intro:null;
   const middleText=visual||mode==='refill'?intro:prepareHint?(game.message?`${game.message} ${intro}`:intro):(game.message||intro);
@@ -840,20 +845,22 @@ function renderArena(owner,mode,intro,controls,visual) {
   const seenReserve=visual?.revealAll&&target?.reserve?.length?`<div class="arena-row"><span class="arena-label">Reserve</span><div class="reserve">${target.reserve.map((id,i)=>cardHTML(id,'','reserve',i,{owner:opponent,row:'reserve'})).join('')}</div></div>`:'';
   const last=visual? '':replayLastButton(true);
   const attackStatus=['attack','battle','replay'].includes(mode)?` · ${game.actions}/${actionLimit()} actions`:'';
-  frame(`<section class="arena" aria-label="Battlefield"><div class="arena-opponent">${chips}<div class="arena-hud">${heading}<span>${target?`${target.front.filter(Boolean).length+target.back.filter(Boolean).length} cards`:''}</span></div>${target?arenaRow(opponent,'back',false,mode,visual):''}${target?arenaRow(opponent,'front',false,mode,visual):''}${seenReserve}</div><div class="arena-middle">${middle}</div><div class="arena-self"><div class="arena-hud"><strong>${own.emoji} ${escapeHTML(own.name)} ${SUITS[owner]}</strong><span>◉ ${own.coins}${attackStatus}</span></div>${arenaRow(owner,'front',true,mode,visual)}${arenaRow(owner,'back',true,mode,visual)}${arenaReserve(owner,visual)}</div><div class="arena-dock ${visual?'replay-dock':''}${last?' with-last':''}">${controls}${last}</div></section>${arenaDetails()}`,true);
+  frame(`<section class="arena" aria-label="Battlefield"><div class="arena-opponent">${chips}${!target?'<div class="opponent-prompt">Select an Opponent</div>':''}<div class="arena-hud">${heading}<span>${target?`${target.front.filter(Boolean).length+target.back.filter(Boolean).length} cards`:''}</span></div>${target?arenaRow(opponent,'back',false,mode,visual):''}${target?arenaRow(opponent,'front',false,mode,visual):''}${seenReserve}</div><div class="arena-middle">${middle}</div><div class="arena-self"><div class="arena-hud"><strong>${own.emoji} ${escapeHTML(own.name)} ${SUITS[owner]}</strong><span>◉ ${own.coins}${attackStatus}</span></div>${arenaRow(owner,'front',true,mode,visual)}${arenaRow(owner,'back',true,mode,visual)}${arenaReserve(owner,visual)}</div><div class="arena-dock ${visual?'replay-dock':''}${last?' with-last':''}">${controls}${last}</div></section>${arenaDetails()}`,true);
 }
 function renderPlay() {
   const p = player(game.turn);
   let intro = '';
   let controls = '';
   if (game.phase === 'buy' || game.phase === 'arrange') {
-    const canBolster=p.front.includes(null)&&p.back.some(Boolean);
     const levy=hireDetails(p);
-    intro = buyPrompt?`Hark! Tap the gilded hollow again to ${levy.verb.toLowerCase()} a random card for ${levy.cost} coins.`:`Prepare!! Good sire, array thy vanguard ere the horns sound.${levy.available?' Tap an empty hollow twice to '+levy.verb.toLowerCase()+' a random card for '+levy.cost+' coins.':''}${covered(p)?'':' Every rear card needs a card in front of it.'}`;
-    controls = `${canBolster?`<button class="button secondary" data-action="bolster">Bolster your lines</button>`:''}<button class="button wide" data-action="next" ${covered(p)?'':'disabled'}>Battle lines ready for battle!</button>`;
+    const hiring=levy.available?(p.coins>=levy.cost?` Tap an empty hollow twice to ${levy.verb.toLowerCase()} a random card for ${levy.cost} coins.`:` ${levy.verb} costs ${levy.cost} coins; you have ${p.coins}.`):' No recruits remain.';
+    intro = buyPrompt?`Hark! Tap the gilded hollow again to ${levy.verb.toLowerCase()} a random card for ${levy.cost} coins.`:`Bolster your lines: array thy vanguard. Tap two cards to swap.${hiring}${covered(p)?'':' Every rear card needs a card in front of it.'}`;
+    controls = `<button class="button wide" data-action="next" ${covered(p)?'':'disabled'}>Battle lines ready for battle!</button>`;
   } else if (game.phase === 'attack') {
-    intro = `Action ${game.actions+1}/${actionLimit()}: tap a champion then a foe to attack, or choose below.${game.usedAttackers?.length?' A different champion must lead each charge.':''}`;
-    controls = `<button class="button secondary" data-action="adjust">Adjust formation · 1 action</button>`;
+    const levy=hireDetails(p),canRecruit=canHire(p);
+    const recruitHint=!levy.available?'No recruits':canRecruit?`${levy.verb} · ${levy.cost} coins`:`Need ${levy.cost-p.coins} more ${levy.cost-p.coins===1?'coin':'coins'}`;
+    intro = `Action ${game.actions+1}/${actionLimit()}: bolster your formation, attack a rival, or skip this action.`;
+    controls = `<button class="button secondary turn-choice${canRecruit?' recruits-ready':''}" data-action="adjust">Bolster<small>${recruitHint}</small></button><button class="button secondary turn-choice" data-action="choose-attack">Attack<small>Choose a champion</small></button><button class="button secondary turn-choice" data-action="skip-action">Skip<small>Use 1 action</small></button>`;
   } else {
     const income=incomeAmount(p);
     intro = `Spoils of war: ${game.kills} fallen ${game.kills===1?'champion':'champions'}${hasCard(p,'J')?' + 1 Jack’s levy':''} = ${income} ${income===1?'coin':'coins'}.`;
@@ -1125,6 +1132,7 @@ function applyHistoryEvent(event) {
     return;
   }
   if(t==='adjust'){game.actions++;game.phase='arrange';game.selection=null;game.message='';return;}
+  if(t==='skip'){game.actions++;game.selection=null;game.message='';if(game.actions>=actionLimit())finishAttacks();return;}
   if(t==='buy'||t==='hire'){
     const owner=Number(event.card.split('-')[0]),p=player(Number.isInteger(owner)?owner:game.turn);
     p.coins-=event.cost??HIRE_COST;
@@ -1248,6 +1256,7 @@ function buildMatchReplay(saved) {
       else if(event.t==='finish') push(game.phase==='refill'?'The vanguard must be made whole.':'The charge is spent.');
       else if(event.t==='mine') push(`${player(game.turn).name} sends the ${cardTitle(event.card||'0-2')} to the mines.`);
       else if(event.t==='adjust') push(`${player(game.turn).name} adjusts the formation.`);
+      else if(event.t==='skip') push(`${player(game.turn).name} holds their ground and skips an action.`);
       else if(event.t==='refillDone'&&saved.history.events[eventIndex-1]?.t!=='arrangeSet') push('The vanguard is made whole.');
       else if(event.t==='arrangeSet') push(`${player(event.owner).name} sets the battle line.`);
       else if(event.t==='sync') push('A royal dispatch refreshes the field.');
@@ -1351,7 +1360,7 @@ function render() {
   }
   if (game.phase === 'setup') {
     const p=player(game.setup), canBolster=p.front.includes(null)&&p.back.some(Boolean);
-    renderArena(game.setup,'setup',game.message || `Round 1 · set your formation: every rear card needs a card in front of it. Tap two cards to trade places.${covered(player(game.setup))?'':' Every rear card needs a card in front of it.'}`,`${canBolster?`<button class="button secondary" data-action="bolster">Bolster your lines</button>`:''}<button class="button wide" data-action="setup-done" ${covered(player(game.setup))?'':'disabled'}>Lock formation →</button>`);
+    renderArena(game.setup,'setup',game.message || `Round 1 · set your formation: every rear card needs a card in front of it. Tap two cards to trade places.${covered(player(game.setup))?'':' Every rear card needs a card in front of it.'}`,`${canBolster?`<button class="button secondary" data-action="bolster">Fill front-line gaps</button>`:''}<button class="button wide" data-action="setup-done" ${covered(player(game.setup))?'':'disabled'}>Lock formation →</button>`);
   } else if (game.phase === 'refill') renderRefill();
   else if (game.phase === 'queen') renderQueen();
   else if (game.phase === 'battle') renderBattle();
@@ -2069,6 +2078,8 @@ app.addEventListener('click', event => {
       game.selection=null; game.message=''; return;
     }
     if (action==='adjust' && game.phase==='attack') { game.actions++;turnAdjusted=true;record({t:'adjust'});game.phase='arrange';game.selection=null;game.message=''; return; }
+    if (action==='choose-attack' && game.phase==='attack') { game.message=selectedOpponent==null?'Select an opponent above, then choose your champion and a target.':'Choose your champion, then tap an enemy card to attack.'; return; }
+    if (action==='skip-action' && game.phase==='attack') { game.actions++;game.selection=null;game.message='';record({t:'skip'});if(game.actions>=actionLimit())finishAttacks();return; }
     if (action==='attacker' && game.phase==='attack') {
       const row=button.dataset.location,id=player(game.turn)[row]?.[index];
       if (id && !(game.usedAttackers||[]).includes(id) && (row==='front' || row==='back' && rank(id)==='10')) game.selection=game.selection?.location===row&&game.selection.index===index?null:{location:row,index};

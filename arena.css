@@ -8,6 +8,7 @@
 .arena-hud{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:.77rem;line-height:1.15;color:#f5dfb1;min-height:19px;max-width:330px;width:100%;margin:0 auto}
 .arena-hud span{color:#aec7b9;white-space:nowrap;font-size:.72rem}
 .opponent-chips{display:flex;max-width:330px;width:100%;margin:0 auto;gap:6px;padding:2px 0}
+.opponent-prompt{flex:1;display:grid;place-items:center;color:#f5dfb1;font:1.3rem Georgia,serif;text-align:center;min-height:100px}
 .opponent-chip{flex:1;min-width:0;display:flex;align-items:center;justify-content:center;gap:5px;border:1.5px solid #577365;background:#102a23;color:#dbe7d7;border-radius:100px;padding:6px 10px;font-size:.8rem;white-space:nowrap;min-height:36px}
 .opponent-chip .chip-emoji{font-size:1.05rem;flex:0 0 auto}
 .opponent-chip .chip-name{overflow:hidden;text-overflow:ellipsis;min-width:0}
@@ -41,6 +42,10 @@
 .clash-analysis{min-width:0;text-align:left;color:#f5dfb1;font-size:clamp(.68rem,1.7dvh,.78rem);line-height:1.18;overflow-wrap:anywhere}
 .arena-dock{min-height:44px;flex:0 0 auto;display:flex;align-items:stretch;justify-content:center;gap:6px;max-width:330px;width:100%;margin:2px auto 0}
 .arena-dock .button{min-height:42px;padding:6px 10px;border-radius:10px;flex:1;font-size:.8rem}
+.arena-dock .turn-choice{flex:1 1 0;min-width:0;padding:8px 4px}
+.turn-choice small{display:block;font-size:.62rem;line-height:1.3;font-weight:400;margin-top:4px;color:#aec7b9}
+.turn-choice.recruits-ready{border-color:#e9be74;box-shadow:inset 0 0 0 1px #e9be7440}
+.turn-choice.recruits-ready small{color:#f5dfb1}
 .arena-dock.with-last{flex-wrap:wrap;min-height:76px}
 .arena-dock .replay-last-btn{flex:1 0 100%;min-height:34px;font-size:.72rem;order:2}
 .reserve-trigger{border:1px solid #779383;background:#203e33;color:#f6e1ae;border-radius:20px;padding:2px 10px;font-size:.69rem;align-self:center;min-height:25px}

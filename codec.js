@@ -98,6 +98,7 @@ const StateCodec = (() => {
         else if(t==='income')byte(9);
         else if(t==='mine'){byte(12);card(e.card);}
         else if(t==='adjust')byte(13);
+        else if(t==='skip')byte(15);
         else if(t==='hire'){byte(14);card(e.card);byte(e.cost);byte(e.from==='graveyard'?1:0);}
         else if(t==='arrangeSet'){
           byte(10);byte(e.owner);
@@ -283,6 +284,7 @@ const StateCodec = (() => {
         else if(type===9) historyEvents.push({t:'income'});
         else if(type===12) historyEvents.push({t:'mine',card:card()});
         else if(type===13) historyEvents.push({t:'adjust'});
+        else if(type===15) historyEvents.push({t:'skip'});
         else if(type===14) historyEvents.push({t:'hire',card:card(),cost:byte(),from:byte()?'graveyard':'deck'});
         else if(type===10){
           const owner=byte(),board=ranksPacked(boardCount,owner),reserve=ranksPacked(byte(),owner);
