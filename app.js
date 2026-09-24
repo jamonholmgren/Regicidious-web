@@ -66,7 +66,7 @@ try { tutorialOpen=localStorage.getItem('regicidious.tutorial.open')==='1';tutor
 const milliseconds=n=>`${n.toFixed(2)} ms`;
 const timingLine=()=>timings.render===null?'':`Last move: logic ${milliseconds(timings.logic)} · save ${milliseconds(timings.save)} · render ${milliseconds(timings.render)}`;
 const creditLine='Original game by Shane Holmgren<br>Digital adaptation by Jamon Holmgren, <a href="https://jammin.games/" target="_blank" rel="noopener noreferrer">Jammin Games</a>';
-const BUILD=58;
+const BUILD=59;
 const buildLine=BUILD>0?`Build ${BUILD}`:'Build local';
 
 try {
@@ -854,13 +854,13 @@ function renderPlay() {
   if (game.phase === 'buy' || game.phase === 'arrange') {
     const levy=hireDetails(p);
     const hiring=levy.available?(p.coins>=levy.cost?` Tap an empty hollow twice to ${levy.verb.toLowerCase()} a random card for ${levy.cost} coins.`:` ${levy.verb} costs ${levy.cost} coins; you have ${p.coins}.`):' No recruits remain.';
-    intro = buyPrompt?`Hark! Tap the gilded hollow again to ${levy.verb.toLowerCase()} a random card for ${levy.cost} coins.`:`Bolster your lines: array thy vanguard. Tap two cards to swap.${hiring}${covered(p)?'':' Every rear card needs a card in front of it.'}`;
+    intro = buyPrompt?`Hark! Tap the gilded hollow again to ${levy.verb.toLowerCase()} a random card for ${levy.cost} coins.`:`Reinforce your lines: array thy vanguard. Tap two cards to swap.${hiring}${covered(p)?'':' Every rear card needs a card in front of it.'}`;
     controls = `<button class="button wide" data-action="next" ${covered(p)?'':'disabled'}>Battle lines ready for battle!</button>`;
   } else if (game.phase === 'attack') {
     const levy=hireDetails(p),canRecruit=canHire(p);
     const recruitHint=!levy.available?'No recruits':canRecruit?`${levy.verb} · ${levy.cost} coins`:`Need ${levy.cost-p.coins} more ${levy.cost-p.coins===1?'coin':'coins'}`;
-    intro = `Action ${game.actions+1}/${actionLimit()}: bolster your formation, attack a rival, or skip this action.`;
-    controls = `<button class="button secondary turn-choice${canRecruit?' recruits-ready':''}" data-action="adjust">Bolster<small>${recruitHint}</small></button><button class="button secondary turn-choice" data-action="choose-attack">Attack<small>Choose a champion</small></button><button class="button secondary turn-choice" data-action="skip-action">Skip<small>Use 1 action</small></button>`;
+    intro = `Action ${game.actions+1}/${actionLimit()}: reinforce or reform your lines, or attack a rival.`;
+    controls = `<button class="button secondary turn-choice reinforce-choice${canRecruit?' recruits-ready':''}" data-action="adjust">Reinforce/Reform<small>${recruitHint}</small></button><button class="button secondary turn-choice" data-action="choose-attack">Attack<small>Choose a champion</small></button>`;
   } else {
     const income=incomeAmount(p);
     intro = `Spoils of war: ${game.kills} fallen ${game.kills===1?'champion':'champions'}${hasCard(p,'J')?' + 1 Jack’s levy':''} = ${income} ${income===1?'coin':'coins'}.`;
@@ -1359,8 +1359,8 @@ function render() {
     game.view=idx;
   }
   if (game.phase === 'setup') {
-    const p=player(game.setup), canBolster=p.front.includes(null)&&p.back.some(Boolean);
-    renderArena(game.setup,'setup',game.message || `Round 1 · set your formation: every rear card needs a card in front of it. Tap two cards to trade places.${covered(player(game.setup))?'':' Every rear card needs a card in front of it.'}`,`${canBolster?`<button class="button secondary" data-action="bolster">Fill front-line gaps</button>`:''}<button class="button wide" data-action="setup-done" ${covered(player(game.setup))?'':'disabled'}>Lock formation →</button>`);
+    const p=player(game.setup), canReinforce=p.front.includes(null)&&p.back.some(Boolean);
+    renderArena(game.setup,'setup',game.message || `Round 1 · set your formation: every rear card needs a card in front of it. Tap two cards to trade places.${covered(player(game.setup))?'':' Every rear card needs a card in front of it.'}`,`${canReinforce?`<button class="button secondary" data-action="bolster">Fill front-line gaps</button>`:''}<button class="button wide" data-action="setup-done" ${covered(player(game.setup))?'':'disabled'}>Lock formation →</button>`);
   } else if (game.phase === 'refill') renderRefill();
   else if (game.phase === 'queen') renderQueen();
   else if (game.phase === 'battle') renderBattle();
@@ -1433,7 +1433,7 @@ function bolsterLines(owner) {
     moveSlot(owner,'back',from);
     moveSlot(owner,'front',i);
   }
-  game.message='The vanguard is bolstered.';
+  game.message='The vanguard is reinforced.';
 }
 function defeat(owner,row,index) {
   const p = player(owner), id=p[row][index];
@@ -2079,7 +2079,6 @@ app.addEventListener('click', event => {
     }
     if (action==='adjust' && game.phase==='attack') { game.actions++;turnAdjusted=true;record({t:'adjust'});game.phase='arrange';game.selection=null;game.message=''; return; }
     if (action==='choose-attack' && game.phase==='attack') { game.message=selectedOpponent==null?'Select an opponent above, then choose your champion and a target.':'Choose your champion, then tap an enemy card to attack.'; return; }
-    if (action==='skip-action' && game.phase==='attack') { game.actions++;game.selection=null;game.message='';record({t:'skip'});if(game.actions>=actionLimit())finishAttacks();return; }
     if (action==='attacker' && game.phase==='attack') {
       const row=button.dataset.location,id=player(game.turn)[row]?.[index];
       if (id && !(game.usedAttackers||[]).includes(id) && (row==='front' || row==='back' && rank(id)==='10')) game.selection=game.selection?.location===row&&game.selection.index===index?null:{location:row,index};

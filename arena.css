@@ -43,6 +43,7 @@
 .arena-dock{min-height:44px;flex:0 0 auto;display:flex;align-items:stretch;justify-content:center;gap:6px;max-width:330px;width:100%;margin:2px auto 0}
 .arena-dock .button{min-height:42px;padding:6px 10px;border-radius:10px;flex:1;font-size:.8rem}
 .arena-dock .turn-choice{flex:1 1 0;min-width:0;padding:8px 4px}
+.arena-dock .reinforce-choice{flex-grow:2}
 .turn-choice small{display:block;font-size:.62rem;line-height:1.3;font-weight:400;margin-top:4px;color:#aec7b9}
 .turn-choice.recruits-ready{border-color:#e9be74;box-shadow:inset 0 0 0 1px #e9be7440}
 .turn-choice.recruits-ready small{color:#f5dfb1}
