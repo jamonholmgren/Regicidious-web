@@ -66,7 +66,7 @@ try { tutorialOpen=localStorage.getItem('regicidious.tutorial.open')==='1';tutor
 const milliseconds=n=>`${n.toFixed(2)} ms`;
 const timingLine=()=>timings.render===null?'':`Last move: logic ${milliseconds(timings.logic)} · save ${milliseconds(timings.save)} · render ${milliseconds(timings.render)}`;
 const creditLine='Original game by Shane Holmgren<br>Digital adaptation by Jamon Holmgren, <a href="https://jammin.games/" target="_blank" rel="noopener noreferrer">Jammin Games</a>';
-const BUILD=59;
+const BUILD=60;
 const buildLine=BUILD>0?`Build ${BUILD}`:'Build local';
 
 try {
@@ -344,10 +344,25 @@ function restoreNoticeText(saved,viewer=saved.turn) {
   return (saved.restoreNotices||[]).filter(alert=>alert.seat!==viewer).map(alert=>
     `${saved.players[alert.seat].name} restored a known seat from a backup before their last move. This is a heads-up, not proof of cheating.`).join(' ');
 }
+function battleTeaser(saved) {
+  const events=saved.lastBattles||[];
+  const kind=saved.phase==='victory'?'victory':!events.length?'quiet':events.some(e=>e.sacrifice)?'sacrifice':events.some(e=>e.result!=='tie'||isGenuineDraw(e))?'fallen':'clash';
+  const tales={
+    victory:['The final horn has sounded. Discover who prevailed!','The contest is decided. Whose banner still flies?','The field has fallen silent. A crown’s fate awaits within!','The last clash is over. Open the dispatch for the reckoning!'],
+    quiet:['The banners stir. A new watch awaits!','The courts have made their preparations. What comes next?','A quiet watch, but the contest is far from over!','The lines are drawn. Open the dispatch, m’lord!'],
+    sacrifice:['A loyal attendant took the blow. The tale awaits!','Someone stepped into the fray for another. Read the dispatch!','A bold interception changed the tale. News awaits!','Loyalty was put to the test upon the field. Read on!'],
+    fallen:['Someone has met their match!','The ranks have thinned. Read the dispatch!','Steel struck true upon the field. Whose fortunes have turned?','A champion has fallen. The tale awaits within!','The clash has taken its toll. News awaits!'],
+    clash:['Blades crossed, but neither yielded!','Steel clashed, and both banners still fly!','A bold encounter, an unsettled score. Read the dispatch!','The clash is over, but the reckoning must wait!']
+  };
+  // Stable per turn: copying, sharing, and reopening tell the same tale.
+  let seed=0;
+  for(const ch of `${saved.matchId||''}:${saved.turnNumber||0}:${kind}`)seed=(Math.imul(seed,31)+ch.charCodeAt(0))>>>0;
+  return tales[kind][seed%tales[kind].length];
+}
 function shareMessage(saved,url) {
-  if(saved.phase==='victory')return `News from the battlefront, m’lords! A crown has changed hands in Regicidious. Open this royal dispatch to learn whose banner still flies. ${url}`;
+  if(saved.phase==='victory')return `News from the battlefront, m’lords! ${battleTeaser(saved)} ${url}`;
   if(saved.phase==='setup')return `${saved.players[saved.turn].name}, the enemy is at the gates! Set your battle lines in Regicidious. ${url}`;
-  return `${lastBattleSentence(saved)} ${saved.players[saved.turn].name}, it’s your turn #${saved.turnNumber}. To arms! ${url}`;
+  return `A royal dispatch awaits. ${battleTeaser(saved)} ${saved.players[saved.turn].name}, it’s your turn #${saved.turnNumber}. To arms! ${url}`;
 }
 const TURN_TOKEN_LIMIT=1500,TURN_MESSAGE_LIMIT=2000;
 function ensureTurnLink() {

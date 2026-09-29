@@ -1,1 +1,1 @@
-window.REGICIDIOUS_BUILD = 59;
+window.REGICIDIOUS_BUILD = 60;
