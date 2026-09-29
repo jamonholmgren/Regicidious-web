@@ -49,6 +49,7 @@ let timings = {logic:null,save:null,render:null};
 let backupText='',incomingBackup=null,incomingKind=null,incomingSeat=null,backupError='',linkLoading=false,dispatchNotice=null;
 let selectedOpponent=null,sheetOpen=false,reserveOpen=false;
 let opponentContext='';
+let battlefieldMatch=null;
 let computerRecording=null,computerPlayback=null,replayTimer=null;
 let historyLock=false,matchReplay=null,matchReplayTimer=null,matchHoldTimer=null;
 let backupForSlot=null,deleteCandidate=null,hubNotice='';
@@ -66,7 +67,7 @@ try { tutorialOpen=localStorage.getItem('regicidious.tutorial.open')==='1';tutor
 const milliseconds=n=>`${n.toFixed(2)} ms`;
 const timingLine=()=>timings.render===null?'':`Last move: logic ${milliseconds(timings.logic)} · save ${milliseconds(timings.save)} · render ${milliseconds(timings.render)}`;
 const creditLine='Original game by Shane Holmgren<br>Digital adaptation by Jamon Holmgren, <a href="https://jammin.games/" target="_blank" rel="noopener noreferrer">Jammin Games</a>';
-const BUILD=60;
+const BUILD=61;
 const buildLine=BUILD>0?`Build ${BUILD}`:'Build local';
 
 try {
@@ -590,7 +591,7 @@ function cardHTML(id, action, location, index, opts={}) {
   const place=opts.owner!=null?`${player(opts.owner).name}, ${opts.row} slot ${index+1}, `:'';
   const queenLink=opts.className?.includes('queen-linked')?' style="border-color:#e9be74;outline:1px solid #f6d899;outline-offset:1px;box-shadow:0 4px 0 #10251e,0 0 12px #e9be7470"':opts.className?.includes('queen-attendant')?' style="border-color:#e9be74;box-shadow:0 4px 0 #10251e,0 0 9px #e9be7455"':'';
   const levyText=opts.buyVerb?`${opts.buyVerb.toLowerCase()} for ${opts.buyCost} coins`:'hire for two coins';
-  if (!id) return `<button class="card empty ${opts.buyConfirm?'buy-armed':''} ${opts.className||''}" ${attrs} aria-label="${escapeHTML(place)}${opts.buyConfirm?`tap again to ${levyText}`:'empty slot'}">${opts.buyConfirm?`${opts.buyCost||HIRE_COST} ◉`:'+'}</button>`;
+  if (!id) return `<button class="card empty ${opts.buyConfirm?'buy-armed':''} ${opts.className||''}" ${attrs} aria-label="${escapeHTML(place)}${opts.buyConfirm?`tap again to ${levyText}`:'empty slot'}">${opts.buyConfirm?`${opts.buyCost||HIRE_COST} ◉`:opts.showEmptyPlus?'+':''}</button>`;
   if (opts.hidden) return `<button class="card back ${opts.target?'target':''} ${opts.className||''}" ${attrs} aria-label="${escapeHTML(place)}face-down card"><span class="center">♛</span></button>`;
   const r=rank(id),role={A:'ASSASSIN','10':'KNIGHT',J:'JACK',Q:'QUEEN',K:'KING'}[r]||'';
   const mining=opts.className?.includes('mining');
@@ -717,21 +718,20 @@ function renderScoreImport() {
   const expanded=incomingScores.length-classic;
   frame(`<section class="panel dispatch"><div class="phase">Personal score backup</div><h1>Restore high scores?</h1><p>${expanded} Expanded and ${classic} Classic scores${incomingRatings?`, plus ${incomingRatings.length} rating results`:''}.</p><p>Your current scores and games stay here. Results you already have are kept once.</p><button class="button wide" data-action="restore-scores">Merge score table</button></section>`);
 }
-function playerChips(saved) {
-  return `<div class="dispatch-seats">${saved.players.map((p,i)=>`<span class="suit-chip${p.alive?'':' fallen-kingdom'}"${p.alive?'':' title="Fallen kingdom"'}>${p.emoji} ${SUITS[i]} ${escapeHTML(p.name)}</span>`).join('')}</div>`;
+function playerChips(saved,concealResult=false) {
+  return `<div class="dispatch-seats">${saved.players.map((p,i)=>`<span class="suit-chip${p.alive||concealResult?'':' fallen-kingdom'}"${p.alive||concealResult?'':' title="Fallen kingdom"'}>${p.emoji} ${SUITS[i]} ${escapeHTML(p.name)}</span>`).join('')}</div>`;
 }
 function renderImport() {
   const g=incomingBackup, victory=g.phase==='victory', invitation=g.phase==='invite', turn=incomingKind==='turn';
-  const winner=g.players.find(p=>p.alive);
   const focus=incomingSeat!=null&&g.players[incomingSeat]?g.players[incomingSeat]:g.players[g.turn];
   const title=victory?'The final dispatch':invitation?'A royal invitation':turn?'A royal dispatch':'A private backup';
-  const headline=victory?`${escapeHTML(winner?.name||'A kingdom')} takes the crown`:invitation?`${escapeHTML(focus.name)}, you are summoned`:`${escapeHTML(focus.name)}, your move`;
+  const headline=victory?'The final clash awaits':invitation?`${escapeHTML(focus.name)}, you are summoned`:`${escapeHTML(focus.name)}, your move`;
   const started=g.startedAt>0?dateText(g.startedAt):'unknown';
   const body=victory?'Open to witness the final clash and its reckoning. Your other saved games remain here.':invitation?'Claim your kingdom now. Your battle lines open when the host declares war and sends the next dispatch.':turn?'Open to replay the last clashes and continue if this is your seat. Your other saved games remain here.':'Restoring adds another saved game. Your current games remain untouched.';
   const go=victory?'View final clash':invitation?'Claim my seat':turn?'Open turn & replay':'Add backup';
   const progress=invitation?`${g.players.length} kingdoms gather`:g.phase==='setup'?`Battle lines · ${g.setup+1} of ${g.players.length}`:`Round ${g.round} · turn #${g.turnNumber}`;
   const notice=restoreNoticeText(g);
-  frame(`<section class="panel dispatch"><div class="phase">${title}</div><h2>${headline}</h2><p class="muted">${progress}</p>${playerChips(g)}<p class="muted small">Started ${escapeHTML(started)}</p><p class="small">${body}</p>${notice?`<p class="status">${escapeHTML(notice)}</p>`:''}<div class="actions"><button class="button" data-action="restore-backup">${go}</button></div></section>`);
+  frame(`<section class="panel dispatch"><div class="phase">${title}</div><h2>${headline}</h2><p class="muted">${progress}</p>${playerChips(g,turn)}<p class="muted small">Started ${escapeHTML(started)}</p><p class="small">${body}</p>${notice?`<p class="status">${escapeHTML(notice)}</p>`:''}<div class="actions"><button class="button" data-action="restore-backup">${go}</button></div></section>`);
 }
 function renderTextWaiting() {
   ensureTurnLink();
@@ -742,8 +742,11 @@ function renderTextWaiting() {
   const settingUp=game.phase==='setup';
   const summary=`<section class="waiting-summary"><div class="crown">${p.emoji}</div><div><div class="phase">${settingUp?`Battle lines · ${game.setup+1} of ${game.players.length}`:`Text multiplayer · turn #${game.turnNumber}`}</div><h1>${escapeHTML(p.name)}’s ${settingUp?'battle lines':'turn'}</h1><p>${groupChat?`Share the next dispatch in thy group chat. It is addressed to ${escapeHTML(p.name)}, and every ruler may carry it there.`:`Send the next dispatch to ${escapeHTML(p.name)}.`}</p>${playerChips(game)}<p class="muted small">Started ${escapeHTML(game.startedAt>0?dateText(game.startedAt):'unknown')}</p>${dispatchNotice?.matchId===game.matchId?`<p class="status small">${escapeHTML(dispatchNotice.text)}</p>`:''}</div></section>`;
   const actions=turnLink?`<div class="actions"><button class="button" data-action="share-turn">${groupChat?'Share turn to group chat':`Send text to ${escapeHTML(p.name)}`}</button><button class="button secondary" data-action="copy-turn">Copy dispatch</button></div><details class="share-detail"><summary>Show dispatch and link</summary><textarea readonly rows="5" aria-label="Dispatch and link">${escapeHTML(shareMessage(game,turnLink))}</textarea></details>`:'<p class="muted small">Preparing a private turn link…</p>';
-  const dispatch=`<section class="panel waiting-panel"><h2>${settingUp?'Send the muster':'Send the dispatch'}</h2>${settingUp?'':`<p class="muted small">${escapeHTML(lastBattleSentence(game))}</p>`}${replayLastButton()}${turnLinkError?`<p class="status">${escapeHTML(turnLinkError)}</p>`:''}${actions}<p class="muted small">The dispatch carries the whole match and a key. Keep it within your war council; it deters casual peeking but cannot prevent cheating.</p></section>`;
+  const dispatch=`<section class="panel waiting-panel"><h2>${settingUp?'Send the muster':'Send the dispatch'}</h2>${settingUp?'':`<p class="muted small">${escapeHTML(battleTeaser(game))}</p>`}${replayLastButton()}${knownSeat(game)>=0?'<button class="button secondary wide" data-action="view-battlefield">View battlefield</button>':''}${turnLinkError?`<p class="status">${escapeHTML(turnLinkError)}</p>`:''}${actions}<p class="muted small">The dispatch carries the whole match and a key. Keep it within your war council; it deters casual peeking but cannot prevent cheating.</p></section>`;
   frame(`${summary}${dispatch}${invites}${pastePanel()}`);
+}
+function renderWaitingBattlefield() {
+  renderArena(knownSeat(game),'watch',`${player(game.turn).name}’s turn. You may survey the field while you wait.`, '<button class="button secondary wide" data-action="view-dispatch">Back to dispatch</button>');
 }
 function renderTextInvites() {
   if(textAccess()!==0){
@@ -813,7 +816,7 @@ function arenaRow(owner,row,own,mode,visual) {
     const active=source||target&&visual?.showTarget;
     const linkClass=!visual&&index===queenIndex?'queen-linked':!visual&&index===attendant?.index?'queen-attendant':'';
     const className=(visual?`${!active?'replay-dim':''} ${active?'replay-active':''} ${source&&visual.kind==='reveal'?'replay-flip':''} ${loser?'replay-loser':''} ${winner?'replay-winner':''}`:linkClass)+(mining?' mining':'');
-    return cardHTML(id,action,own?row:`${owner}:${row}`,index,{hidden,owner,row,target:reveal,className,buyConfirm:own&&['buy','arrange'].includes(mode)&&buyPrompt?.location===row&&buyPrompt.index===index,buyCost:levy.cost,buyVerb:levy.verb});
+    return cardHTML(id,action,own?row:`${owner}:${row}`,index,{hidden,owner,row,showEmptyPlus:own&&['buy','arrange'].includes(mode)&&!visual,target:reveal,className,buyConfirm:own&&['buy','arrange'].includes(mode)&&buyPrompt?.location===row&&buyPrompt.index===index,buyCost:levy.cost,buyVerb:levy.verb});
   });
   const wide=p[row].length>3?' cols-4':'';
   return `<div class="arena-row${wide}"><span class="arena-label">${row==='front'?'Front line':'Back line'}</span><div class="line">${cards.join('')}</div></div>`;
@@ -848,7 +851,7 @@ function renderArena(owner,mode,intro,controls,visual) {
   const heading=`<strong>${target?`${target.emoji} ${escapeHTML(target.name)} ${SUITS[opponent]}`:''}</strong>`;
   const chips=chooseOpponent&&candidates.length>1?`<div class="opponent-chips" aria-label="Choose an opponent">${candidates.map(i=>`<button class="opponent-chip${i===opponent?' active':''}" data-action="opponent" data-index="${i}" aria-label="View ${escapeHTML(player(i).name)}" aria-pressed="${i===opponent}"><span class="chip-emoji">${player(i).emoji}</span><span class="chip-name">${escapeHTML(player(i).name)}</span></button>`).join('')}</div>`:'';
   const prepareHint=(mode==='buy'||mode==='arrange')&&!visual?intro:null;
-  const middleText=visual||mode==='refill'?intro:prepareHint?(game.message?`${game.message} ${intro}`:intro):(game.message||intro);
+  const middleText=visual||mode==='refill'||mode==='watch'?intro:prepareHint?(game.message?`${game.message} ${intro}`:intro):(game.message||intro);
   let middle=`<div class="arena-instruction">${escapeHTML(middleText)}</div>`;
   if(mode==='battle'||visual?.showDice) {
     const b=game.pending;
@@ -860,7 +863,7 @@ function renderArena(owner,mode,intro,controls,visual) {
   const seenReserve=visual?.revealAll&&target?.reserve?.length?`<div class="arena-row"><span class="arena-label">Reserve</span><div class="reserve">${target.reserve.map((id,i)=>cardHTML(id,'','reserve',i,{owner:opponent,row:'reserve'})).join('')}</div></div>`:'';
   const last=visual? '':replayLastButton(true);
   const attackStatus=['attack','battle','replay'].includes(mode)?` · ${game.actions}/${actionLimit()} actions`:'';
-  frame(`<section class="arena" aria-label="Battlefield"><div class="arena-opponent">${chips}${!target?'<div class="opponent-prompt">Select an Opponent</div>':''}<div class="arena-hud">${heading}<span>${target?`${target.front.filter(Boolean).length+target.back.filter(Boolean).length} cards`:''}</span></div>${target?arenaRow(opponent,'back',false,mode,visual):''}${target?arenaRow(opponent,'front',false,mode,visual):''}${seenReserve}</div><div class="arena-middle">${middle}</div><div class="arena-self"><div class="arena-hud"><strong>${own.emoji} ${escapeHTML(own.name)} ${SUITS[owner]}</strong><span>◉ ${own.coins}${attackStatus}</span></div>${arenaRow(owner,'front',true,mode,visual)}${arenaRow(owner,'back',true,mode,visual)}${arenaReserve(owner,visual)}</div><div class="arena-dock ${visual?'replay-dock':''}${last?' with-last':''}">${controls}${last}</div></section>${arenaDetails()}`,true);
+  frame(`<section class="arena" aria-label="Battlefield"><div class="arena-opponent">${chips}${!target?'<div class="opponent-prompt">Select an Opponent</div>':''}<div class="arena-hud">${heading}<span>${target?`${target.front.filter(Boolean).length+target.back.filter(Boolean).length} cards`:''}</span></div>${target?arenaRow(opponent,'back',false,mode,visual):''}${target?arenaRow(opponent,'front',false,mode,visual):''}${seenReserve}</div><div class="arena-middle">${middle}</div><div class="arena-self"><div class="arena-hud"><strong>${own.emoji} ${escapeHTML(own.name)} ${SUITS[owner]}</strong><span>◉ ${own.coins}${attackStatus}</span></div>${arenaRow(owner,'front',true,mode,visual)}${arenaRow(owner,'back',true,mode,visual)}${mode==='watch'?'':arenaReserve(owner,visual)}</div><div class="arena-dock ${visual?'replay-dock':''}${last?' with-last':''}">${controls}${last}</div></section>${arenaDetails()}`,true);
 }
 function renderPlay() {
   const p = player(game.turn);
@@ -1364,7 +1367,7 @@ function render() {
   if(computerPlayback)return renderPlayback();
   if (!game) return setupOpen?renderSetup():renderStart();
   if(game.phase==='invite')return renderTextInvites();
-  if(game.mode==='text'&&textAccess()!==game.turn&&game.phase!=='victory')return renderTextWaiting();
+  if(game.mode==='text'&&textAccess()!==game.turn&&game.phase!=='victory')return battlefieldMatch===game.matchId&&knownSeat(game)>=0?renderWaitingBattlefield():renderTextWaiting();
   if(needsFirstIdentity())return renderFirstIdentity();
   if (game.phase === 'victory') return renderVictory();
   if (game.phase === 'stalemate') return renderStalemate();
@@ -1891,6 +1894,8 @@ app.addEventListener('click', event => {
   if(action==='replay-last'&&game?.mode==='text'&&game.lastBattles?.length){
     sheetOpen=false;startTextReplay(game);render();return;
   }
+  if(action==='view-battlefield'&&game?.mode==='text'&&knownSeat(game)>=0){battlefieldMatch=game.matchId;sheetOpen=false;render();return;}
+  if(action==='view-dispatch'){battlefieldMatch=null;sheetOpen=false;render();return;}
   if(action==='open-link'){pasteOpen=true;render();return;}
   if(action==='close-link'){pasteOpen=false;render();return;}
   if(action==='setup-open'){setupOpen=true;clearLinkError();render();return;}
@@ -1956,11 +1961,11 @@ app.addEventListener('click', event => {
   if(action==='toggle-sheet') { sheetOpen=!sheetOpen;render();return; }
   if(action==='reserve') { reserveOpen=!reserveOpen;render();return; }
   if(action==='opponent') {
-    const owner=game.phase==='setup'?game.setup:game.phase==='refill'?game.refill[game.refillIndex]:game.turn;
+    const owner=battlefieldMatch===game.matchId&&knownSeat(game)>=0?knownSeat(game):game.phase==='setup'?game.setup:game.phase==='refill'?game.refill[game.refillIndex]:game.turn;
     if(index!==owner&&living().includes(index)){selectedOpponent=index;render();}
     return;
   }
-  if(action==='games') { stopMatchReplay();closeTutorial();scoresOpen=false;incomingRequest++;lastIncomingLocationHash='';incomingBackup=null;incomingScores=null;incomingRatings=null;incomingKind=null;incomingSeat=null;linkLoading=false;backupError='';history.replaceState(null,'',location.pathname+location.search);hubOpen=true;completedOpen=false;sheetOpen=false;reserveOpen=false;backupText='';render();return; }
+  if(action==='games') { battlefieldMatch=null;stopMatchReplay();closeTutorial();scoresOpen=false;incomingRequest++;lastIncomingLocationHash='';incomingBackup=null;incomingScores=null;incomingRatings=null;incomingKind=null;incomingSeat=null;linkLoading=false;backupError='';history.replaceState(null,'',location.pathname+location.search);hubOpen=true;completedOpen=false;sheetOpen=false;reserveOpen=false;backupText='';render();return; }
   if(action==='completed-games') { stopMatchReplay();hubOpen=true;completedOpen=true;sheetOpen=false;reserveOpen=false;backupText='';render();return; }
   if(action==='new-game' || action==='new-after-win') { stopMatchReplay();closeTutorial();scoresOpen=false;clearLinkError();game=null;slotId=null;hubOpen=false;completedOpen=false;setupOpen=true;sheetOpen=false;reserveOpen=false;backupText='';render();return; }
   if(action==='replay-game') {
@@ -2026,7 +2031,7 @@ app.addEventListener('click', event => {
         persistSeat(restored.matchId,seat);
         localStorage.removeItem(DELETED_PREFIX+restored.matchId);
       }
-      if(restored.mode==='text'&&kind==='turn'&&(restored.phase==='victory'||!existing||existing.game.turnNumber<restored.turnNumber))startTextReplay(restored);
+      battlefieldMatch=null;if(restored.mode==='text'&&kind==='turn')startTextReplay(restored);
       incomingBackup=null;incomingKind=null;incomingSeat=null;clearLinkError();
       history.replaceState(null,'',location.pathname+location.search);render();
     }
@@ -2051,12 +2056,12 @@ app.addEventListener('click', event => {
     return;
   }
   if(needsFirstIdentity())return;
+  if(game?.mode==='text'&&textAccess()!==game.turn)return;
   if (action==='bolster' && game && ['setup','buy','arrange'].includes(game.phase)) {
     const owner=game.phase==='setup'?game.setup:game.turn;
     return commit(()=>bolsterLines(owner));
   }
   if (!game) return;
-  if(game.mode==='text'&&textAccess()!==game.turn)return;
   commit(() => {
     if (action==='reveal') { game.view=game.phase==='setup'?game.setup:game.phase==='refill'?game.refill[game.refillIndex]:game.phase==='queen'?game.pending.defender:game.turn; return; }
     if (action==='slot') {
@@ -2188,7 +2193,7 @@ async function openIncomingHash(hash){
           incomingBackup=null;incomingKind=null;incomingSeat=null;clearLinkError();
           dispatchNotice={matchId:saved.matchId,text:same?'This dispatch is already in your chronicle.':`Updated from ${saved.players[existing.game.turn]?.name||'the latest'}’s dispatch.`};
           history.replaceState(null,'',location.pathname+location.search);linkLoading=false;
-          if(saved.turn===knownSeat(saved)&&saved.phase!=='setup'&&saved.phase!=='victory'&&!same)startTextReplay(saved);
+          battlefieldMatch=null;startTextReplay(saved);
           render();return;
         }
       }
